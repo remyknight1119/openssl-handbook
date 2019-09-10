@@ -217,5 +217,5 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 
 ![Figure 2. Intel QAT engine ASYNC flow](../.gitbook/assets/async2.jpg)
 
-本图以RSA加密解密为例，简要介绍了intel QAT engine的ASYNC mode流程。
+本图以RSA加密解密为例，简要介绍了intel QAT engine的ASYNC mode运行流程。
 

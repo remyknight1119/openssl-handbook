@@ -1,6 +1,6 @@
 # 五、TLS Renegotiation
 
-## 一、什么是重协商
+## 1. 什么是重协商
 
     大部分TLS连接都以handshake为开始，经过应用数据的交换，最后关闭会话。如果在第一次handshake之后（可能经历了应用数据的交换也可能没有）请求重新协商，就会发起一次新的handshake，对新的安全参数达成一致。重协商的handshake的消息都是全部加密的，这与第一次handshake明显不同。
 
@@ -10,7 +10,7 @@
 
 \*\) 隐藏消息：由于重协商的handshake消息是加密的，被动攻击者无法监视协商过程，这样就可以隐藏一些敏感信息（比如证书中包含的身份识别信息）。
 
-## 二、怎样发起重协商
+## 2. 怎样发起重协商
 
     有两种方式可以发起重协商：
 
@@ -18,7 +18,7 @@
 
 \*\)Server发起：如果server希望重新协商，它会发送HelloRequest消息给client，这个消息通知client停止发送应用数据，并开始新的handshake。
 
-## 三、重协商的安全性
+## 3. 重协商的安全性
 
     重协商机制并不安全，针对重协商的攻击类型如下：
 
@@ -52,7 +52,7 @@
 
     攻击过程（举例）的示意图如下：
 
-![](https://img-blog.csdn.net/20170908083418992?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvdTAxMTEzMDU3OA==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center)
+![Figure 1. Renegotiation Attack](../.gitbook/assets/renego1.png)
 
     这种攻击会使得server执行攻击者制定的任意GET请求。
 
@@ -66,7 +66,7 @@
 
 【注1】：重协商的安全缺陷对client的威胁在于：攻击者可以通过控制服务器来攻击与之通信的client。由于在攻击发生时client并未参与到重协商的过程中，故对于client唯一可行的保护自己的方法就是只于支持安全重协商的server建立连接。对于禁用了重协商功能的server，client不希望自己无法连接它们，但client无法区分server是禁用了重协商还是不支持安全重协商。所以server禁用重协商的行为会导致client很难使用有效的方法来保护自己。
 
-## 四、安全重协商
+## 4. 安全重协商
 
     为了解决中间人攻击的问题，【RFC5764】提出了“安全重协商”机制。本质很简单，就是关联两次握手，方式是提供了一个新的扩展（renegotiation\_info）。SSLv3/TLS 1.0不支持扩展，为了使其支持安全重协商，client需要发送**TLS\_EMPTY\_RENEGOTIATION\_INFO\_SCSV（0xFF）密码套件**（缩写为SCSV）**。**
 
@@ -78,7 +78,7 @@
 
 3\)重协商时client在ClientHello中包含client\_verify\_data，server在ServerHello中包含client\_verify\_data和server\_verify\_data。对于受害者，如果协商中不会携带这些数据则连接无法建立。由于Finished消息总是加密的，攻击者无法得到client\_verify\_data和server\_verify\_data的值。
 
-## 五、OpenSSL中的重协商（基于OpenSSL-1.1.0f）
+## 5. OpenSSL中的重协商（基于OpenSSL-1.1.0f）
 
 ### 5.1 发起重协商
 
@@ -1148,7 +1148,7 @@ Client在检查重协商扩展时，如果扩展的内容为0（第一次handsha
 
          如果检查通过则执行正常的handshake流程。在handshake的最后阶段双方会用本次会话中的FINISHED消息的hash值刷新各自的client\_finished和server\_finished缓存，留待下次重协商时使用。    
 
-## 六、重协商功能配置策略
+## 6. 重协商功能配置策略
 
 ### 6.1 Server禁止\|限制client发起重协商
 

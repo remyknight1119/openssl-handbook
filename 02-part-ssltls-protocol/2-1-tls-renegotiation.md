@@ -2,9 +2,11 @@
 
 ## 1. 什么是重协商
 
-    大部分TLS连接都以handshake为开始，经过应用数据的交换，最后关闭会话。如果在第一次handshake之后（可能经历了应用数据的交换也可能没有）请求重新协商，就会发起一次新的handshake，对新的安全参数达成一致。重协商的handshake的消息都是全部加密的，这与第一次handshake明显不同。
+```text
+大部分TLS连接都以handshake为开始，经过应用数据的交换，最后关闭会话。如果在第一次handshake之后（可能经历了应用数据的交换也可能没有）请求重新协商，就会发起一次新的handshake，对新的安全参数达成一致。重协商的handshake的消息都是全部加密的，这与第一次handshake明显不同。
 
-    重协商功能应用场景举例：
+重协商功能应用场景举例：
+```
 
 \*\) Client证书：可以设置访问网站的根路径不要求client携带证书，而在client访问特定子区域时server发起重协商请求，要求client携带证书；
 
@@ -12,7 +14,9 @@
 
 ## 2. 怎样发起重协商
 
-    有两种方式可以发起重协商：
+```text
+有两种方式可以发起重协商：
+```
 
 \*\)Client发起：TLS协议允许client在任意时间简单地发送新的ClientHello消息请求重新协商，就如同建立一个新的连接一样；
 
@@ -20,45 +24,55 @@
 
 ## 3. 重协商的安全性
 
-    重协商机制并不安全，针对重协商的攻击类型如下：
+```text
+重协商机制并不安全，针对重协商的攻击类型如下：
+```
 
 ### 3.1 DoS攻击
 
-    TLS的handshake过程需要使用非对称算法进行身份认证和密钥协商，这个过程需要很多计算资源。Handshake本来只在TLS连接开始建立时执行一次，但由于重协商机制的引入，使得client被允许不断发起新的handshake。由于client可以使用较少的资源来执行handshake（比如：不检查server的证书，这样可以避免校验签名的开销），这样攻击者就可以更容易地耗尽server的资源导致其拒绝为其它用户的请求提供服务。
+```text
+TLS的handshake过程需要使用非对称算法进行身份认证和密钥协商，这个过程需要很多计算资源。Handshake本来只在TLS连接开始建立时执行一次，但由于重协商机制的引入，使得client被允许不断发起新的handshake。由于client可以使用较少的资源来执行handshake（比如：不检查server的证书，这样可以避免校验签名的开销），这样攻击者就可以更容易地耗尽server的资源导致其拒绝为其它用户的请求提供服务。
 
-         这种攻击与分布式拒绝服务攻击\(DDoS\)的不同之处在于，它不需要大量的攻击来消耗网络带宽，而仅仅通过一台主机的一个TCP/IP socket来耗尽server的资源（这样就会导致当前的DoS和DDoS防御策略无效）。例如，一台server通常能执行150-300次/s握手，而一个client可以发起多达1000次/s握手请求。
+     这种攻击与分布式拒绝服务攻击\(DDoS\)的不同之处在于，它不需要大量的攻击来消耗网络带宽，而仅仅通过一台主机的一个TCP/IP socket来耗尽server的资源（这样就会导致当前的DoS和DDoS防御策略无效）。例如，一台server通常能执行150-300次/s握手，而一个client可以发起多达1000次/s握手请求。
 
-         防御方法：
+     防御方法：
+```
 
-1\)  禁用重协商功能：不推荐，因为这样会导致依赖重协商的特性无法使用；
+1\) 禁用重协商功能：不推荐，因为这样会导致依赖重协商的特性无法使用；
 
-2\)  禁止client发起重协商：目前看来似乎是个不错的选择；
+2\) 禁止client发起重协商：目前看来似乎是个不错的选择；
 
-3\)  速率限制：对新到来的TLS连接和重协商的速率进行限制；
+3\) 速率限制：对新到来的TLS连接和重协商的速率进行限制；
 
-4\)  使用SSL加速卡：通过极大地提高server对handshake的处理能力来增加攻击的成本，但可能攻击者只增加一到两台主机进行攻击就可以使得此措施无效。
+4\) 使用SSL加速卡：通过极大地提高server对handshake的处理能力来增加攻击的成本，但可能攻击者只增加一到两台主机进行攻击就可以使得此措施无效。
 
 ### 3.2 中间人攻击
 
-    由于TLS的重协商前后的两条TLS连接之间没有关联（即使它们发生在同一条TCP连接上），而且应用层（如HTTP）与加密层很少交互（例如，如果重协商发生在HTTP请求的过程中，上层应用是得不到通知的），导致TLS层面发生的事情与上层应用了解到的信息不匹配。
+```text
+由于TLS的重协商前后的两条TLS连接之间没有关联（即使它们发生在同一条TCP连接上），而且应用层（如HTTP）与加密层很少交互（例如，如果重协商发生在HTTP请求的过程中，上层应用是得不到通知的），导致TLS层面发生的事情与上层应用了解到的信息不匹配。
 
-    因此，一个中间人（man-in-the-middle，MITM）攻击者就可以通过如下步骤来利用这个漏洞：
+因此，一个中间人（man-in-the-middle，MITM）攻击者就可以通过如下步骤来利用这个漏洞：
+```
 
-1\)  拦截一个client到server的TCP连接，截住其TLS handshake请求；
+1\) 拦截一个client到server的TCP连接，截住其TLS handshake请求；
 
-2\)  新建一个到server的TLS连接，在handshake之后发送攻击负载；
+2\) 新建一个到server的TLS连接，在handshake之后发送攻击负载；
 
-3\)  将1\)中拦截的handshake请求通过与server的TLS连接发送过去，这样在server看来是重协商，而在client看来是一条全新的TLS连接。一旦重协商完成，client与server开始交换应用层数据，攻击者的攻击负载和client的正常数据就会被server合并处理，从而使得攻击成功。
+3\) 将1\)中拦截的handshake请求通过与server的TLS连接发送过去，这样在server看来是重协商，而在client看来是一条全新的TLS连接。一旦重协商完成，client与server开始交换应用层数据，攻击者的攻击负载和client的正常数据就会被server合并处理，从而使得攻击成功。
 
-    攻击过程（举例）的示意图如下：
+```text
+攻击过程（举例）的示意图如下：
+```
 
 ![Figure 1. Renegotiation Attack](../.gitbook/assets/renego1.png)
 
-    这种攻击会使得server执行攻击者制定的任意GET请求。
+```text
+这种攻击会使得server执行攻击者制定的任意GET请求。
 
-    对于这种MITM攻击，即使禁止了client发起重协商，依赖于client证书校验和支持SGC的网站仍然容易遭到攻击。因为攻击者只需要调查网站在哪些情况下是需要进行重协商的，如果条件得到满足则攻击者就可以开展攻击行为。
+对于这种MITM攻击，即使禁止了client发起重协商，依赖于client证书校验和支持SGC的网站仍然容易遭到攻击。因为攻击者只需要调查网站在哪些情况下是需要进行重协商的，如果条件得到满足则攻击者就可以开展攻击行为。
 
-    防御方法：
+防御方法：
+```
 
 1）禁用重协商功能：不推荐，除了会使得依赖重协商的特性无法使用外，还会导致增加了网络上重协商功能的不确定性，使得client无法有效保护自己【注1】
 
@@ -68,7 +82,9 @@
 
 ## 4. 安全重协商
 
-    为了解决中间人攻击的问题，【RFC5764】提出了“安全重协商”机制。本质很简单，就是关联两次握手，方式是提供了一个新的扩展（renegotiation\_info）。SSLv3/TLS 1.0不支持扩展，为了使其支持安全重协商，client需要发送**TLS\_EMPTY\_RENEGOTIATION\_INFO\_SCSV（0xFF）密码套件**（缩写为SCSV）**。**
+```text
+为了解决中间人攻击的问题，【RFC5764】提出了“安全重协商”机制。本质很简单，就是关联两次握手，方式是提供了一个新的扩展（renegotiation\_info）。SSLv3/TLS 1.0不支持扩展，为了使其支持安全重协商，client需要发送**TLS\_EMPTY\_RENEGOTIATION\_INFO\_SCSV（0xFF）密码套件**（缩写为SCSV）**。**
+```
 
 **安全重协商的流程如下：**
 
@@ -84,7 +100,9 @@
 
 #### 5.1.1 SSL\_renegotiate
 
-         Client和server只需调用SSL\_renegotiate\(ssl\)函数即可完成发起重协商的设置。SSL\_renegotiate\(\)函数定义如下：
+```text
+     Client和server只需调用SSL\_renegotiate\(ssl\)函数即可完成发起重协商的设置。SSL\_renegotiate\(\)函数定义如下：
+```
 
 ```text
 1641 int SSL_renegotiate(SSL *s)
@@ -98,7 +116,9 @@
 1649 }
 ```
 
-         对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，s-&gt;method-&gt;ssl\_renegotiate指向ssl3\_renegotiate\(\)：
+```text
+     对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，s-&gt;method-&gt;ssl\_renegotiate指向ssl3\_renegotiate\(\)：
+```
 
 ```text
 3865 int ssl3_renegotiate(SSL *s)
@@ -114,11 +134,15 @@
 3875 }
 ```
 
-     可见，SSL\_renegotiate\(\)函数只是将s-&gt;s3-&gt;renegotiate设置为1而已，并不是发送重协商报文（Handshake，HelloRequest）。发送重协商报文是在SSL\_write\(\)或SSL\_read\(\)函数被调用的时候进行的：
+```text
+ 可见，SSL\_renegotiate\(\)函数只是将s-&gt;s3-&gt;renegotiate设置为1而已，并不是发送重协商报文（Handshake，HelloRequest）。发送重协商报文是在SSL\_write\(\)或SSL\_read\(\)函数被调用的时候进行的：
+```
 
 #### 5.1.2 发送第一个消息
 
-         先来看SSL\_write\(\)函数。对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，SSL\_write\(\)最终都会调用ssl3\_write\(\)函数：
+```text
+     先来看SSL\_write\(\)函数。对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，SSL\_write\(\)最终都会调用ssl3\_write\(\)函数：
+```
 
 ```text
 3816 int ssl3_write(SSL *s, const void *buf, int len)
@@ -131,7 +155,9 @@
 3823 }
 ```
 
-         由于之前调用的SSL\_renegotiate\(\)函数将s-&gt;s3-&gt;renegotiate设置为1，故会在3820行调用到ssl3\_renegotiate\_check\(\)函数：
+```text
+     由于之前调用的SSL\_renegotiate\(\)函数将s-&gt;s3-&gt;renegotiate设置为1，故会在3820行调用到ssl3\_renegotiate\_check\(\)函数：
+```
 
 ```text
 3877 int ssl3_renegotiate_check(SSL *s)
@@ -158,7 +184,9 @@
 3898 }
 ```
 
-         其中的关键代码是3890行ossl\_statem\_set\_renegotiate\(\)函数：
+```text
+     其中的关键代码是3890行ossl\_statem\_set\_renegotiate\(\)函数：
+```
 
 ```text
 103 /*      
@@ -171,7 +199,9 @@
 110 }
 ```
 
-    调用完ssl3\_renegotiate\_check\(\)函数之后，ssl3\_write\(\)会调用s-&gt;method-&gt;ssl\_write\_bytes指向的ssl3\_write\_bytes\(\)函数：
+```text
+调用完ssl3\_renegotiate\_check\(\)函数之后，ssl3\_write\(\)会调用s-&gt;method-&gt;ssl\_write\_bytes指向的ssl3\_write\_bytes\(\)函数：
+```
 
 ```text
 343 int ssl3_write_bytes(SSL *s, int type, const void *buf_, int len)
@@ -189,7 +219,9 @@
 …
 ```
 
-    其中SSL\_in\_init\(s\)的返回值会是1：
+```text
+其中SSL\_in\_init\(s\)的返回值会是1：
+```
 
 ```text
 69 int SSL_in_init(SSL *s)
@@ -198,7 +230,9 @@
 72 }
 ```
 
-         由于是在handshake结束之后调用，故ossl\_statem\_get\_in\_handshake\(s\)的返回值会是0：
+```text
+     由于是在handshake结束之后调用，故ossl\_statem\_get\_in\_handshake\(s\)的返回值会是0：
+```
 
 ```text
 141 int ossl_statem_get_in_handshake(SSL *s)
@@ -207,9 +241,11 @@
 144 }
 ```
 
-         故ssl3\_write\_bytes\(\)会执行380行s-&gt;handshake\_func\(s\)。
+```text
+     故ssl3\_write\_bytes\(\)会执行380行s-&gt;handshake\_func\(s\)。
 
-         再来看SSL\_read\(\)。对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，这个函数最终会调用ssl3\_read\(\)：
+     再来看SSL\_read\(\)。对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，这个函数最终会调用ssl3\_read\(\)：
+```
 
 ```text
 3825 static int ssl3_read_internal(SSL *s, void *buf, int len, int peek)
@@ -248,7 +284,9 @@
 3858 }
 ```
 
-         调用SSL\_renegotiate\(\)后3831行会被执行，其影响见上文对SSL\_write\(\)函数的分析。s-&gt;method-&gt;ssl\_read\_bytes\(\)指向ssl3\_read\_bytes\(\)：
+```text
+     调用SSL\_renegotiate\(\)后3831行会被执行，其影响见上文对SSL\_write\(\)函数的分析。s-&gt;method-&gt;ssl\_read\_bytes\(\)指向ssl3\_read\_bytes\(\)：
+```
 
 ```text
 975 int ssl3_read_bytes(SSL *s, int type, int *recvd_type, unsigned char *buf,
@@ -268,7 +306,9 @@
 …
 ```
 
-    最后SSL\_read\(\)会执行1031行代码。可见在调用SSL\_renegotiate\(\)开启协商功能后，SSL\_write\(\)和SSL\_read\(\)都会调用s-&gt;handshake\_func\(s\)，对于client会调用到ossl\_statem\_connect：
+```text
+最后SSL\_read\(\)会执行1031行代码。可见在调用SSL\_renegotiate\(\)开启协商功能后，SSL\_write\(\)和SSL\_read\(\)都会调用s-&gt;handshake\_func\(s\)，对于client会调用到ossl\_statem\_connect：
+```
 
 ```text
 168 int ossl_statem_connect(SSL *s)
@@ -277,7 +317,9 @@
 171 }
 ```
 
-         对于server则会调用ossl\_statem\_accept\(\)：
+```text
+     对于server则会调用ossl\_statem\_accept\(\)：
+```
 
 ```text
 173 int ossl_statem_accept(SSL *s)
@@ -286,7 +328,9 @@
 176 }
 ```
 
-         它们都会调用state\_machine\(\)：
+```text
+     它们都会调用state\_machine\(\)：
+```
 
 ```text
 218 static int state_machine(SSL *s, int server)
@@ -336,7 +380,9 @@
 414     ret = 1;
 ```
 
-         由于执行了380行，故396行write\_state\_machine\(\)会执行：
+```text
+     由于执行了380行，故396行write\_state\_machine\(\)会执行：
+```
 
 ```text
 704 static SUB_STATE_RETURN write_state_machine(SSL *s)
@@ -438,11 +484,13 @@
 800 }
 ```
 
-         由于state\_machine \(\)函数在381行调用了init\_write\_state\_machine\(\)，使得在write\_state\_machine\(\)函数的while循环中会从731行还是的WRITE\_STATE\_TRANSITIONcase块开始执行（状态变迁），然后顺次执行754行开始的WRITE\_STATE\_PRE\_WORK cse块（构建handshake消息），771行开始的WRITE\_STATE\_SENDcase块（发送handshake消息）,783行开始的WRITE\_STATE\_POST\_WORK case块（发送消息之后的处理工作）。然后根据状态机变迁的结果重复上述操作（安装次序发送handshake报文）。但对于第一个重协商消息\(client是ClientHello，server是HelloRequest\)，发送完毕后会跳出循环。
+```text
+     由于state\_machine \(\)函数在381行调用了init\_write\_state\_machine\(\)，使得在write\_state\_machine\(\)函数的while循环中会从731行还是的WRITE\_STATE\_TRANSITIONcase块开始执行（状态变迁），然后顺次执行754行开始的WRITE\_STATE\_PRE\_WORK cse块（构建handshake消息），771行开始的WRITE\_STATE\_SENDcase块（发送handshake消息）,783行开始的WRITE\_STATE\_POST\_WORK case块（发送消息之后的处理工作）。然后根据状态机变迁的结果重复上述操作（安装次序发送handshake报文）。但对于第一个重协商消息\(client是ClientHello，server是HelloRequest\)，发送完毕后会跳出循环。
 
-         这里有一个关键的问题：write\_state\_machine\(\)函数如何区分client和server并为它们发送不同的重协商消息呢？主要取决于transition函数和construct\_message函数的选择。
+     这里有一个关键的问题：write\_state\_machine\(\)函数如何区分client和server并为它们发送不同的重协商消息呢？主要取决于transition函数和construct\_message函数的选择。
 
-         对于client，transition =ossl\_statem\_client\_write\_transition：
+     对于client，transition =ossl\_statem\_client\_write\_transition：
+```
 
 ```text
 273 /*
@@ -462,7 +510,7 @@
 ...
 ```
 
- 在285行st-&gt;hand\_state会被设置为TLS\_ST\_CW\_CLNT\_HELLO。而construct\_message= ossl\_statem\_client\_construct\_message：
+在285行st-&gt;hand\_state会被设置为TLS\_ST\_CW\_CLNT\_HELLO。而construct\_message= ossl\_statem\_client\_construct\_message：
 
 ```text
  513 int ossl_statem_client_construct_message(SSL *s)
@@ -474,9 +522,11 @@
  519        return tls_construct_client_hello(s);
 ```
 
-         这样会使得client发送的第一个重协商消息为ClientHello。
+```text
+     这样会使得client发送的第一个重协商消息为ClientHello。
 
-         对于server，transition =ossl\_statem\_server\_write\_transition：
+     对于server，transition =ossl\_statem\_server\_write\_transition：
+```
 
 ```text
  306 /*
@@ -499,7 +549,7 @@
 …
 ```
 
- st-&gt;hand\_state被设置为TLS\_ST\_SW\_HELLO\_REQ。对于server，construct\_message =  ossl\_statem\_server\_construct\_message：
+st-&gt;hand\_state被设置为TLS\_ST\_SW\_HELLO\_REQ。对于server，construct\_message = ossl\_statem\_server\_construct\_message：
 
 ```text
  615 /*
@@ -522,11 +572,15 @@
 …
 ```
 
-         所以server发送的第一个重协商消息是HelloRequest。
+```text
+     所以server发送的第一个重协商消息是HelloRequest。
+```
 
 #### 5.1.3 接收重协商消息并发送后续消息
 
-         对重协商消息的接收是由SSL\_read\(\)完成的\(SSL\_write\(\)函数不能接收重协商消息\)，它接收到的是HelloRequest或ClientHello消息，对于TLS\_client\_metho\(\)和TLS\_server\_method\(\)，这个函数最终会调用ssl3\_read\_bytes\(\)：
+```text
+     对重协商消息的接收是由SSL\_read\(\)完成的\(SSL\_write\(\)函数不能接收重协商消息\)，它接收到的是HelloRequest或ClientHello消息，对于TLS\_client\_metho\(\)和TLS\_server\_method\(\)，这个函数最终会调用ssl3\_read\_bytes\(\)：
+```
 
 ```text
 975 int ssl3_read_bytes(SSL *s, int type, int *recvd_type, unsigned char *buf,
@@ -615,14 +669,16 @@
 ...
 ```
 
-         1029-1036行：如果已经处于Handshake状态，则直接调用s-&gt;handshake\_func\(\)函数处理消息：如果收到是handshake消息则直接处理，如果是Application数据（client在发出ClientHello之后可能不会立即回复ServerHello而是继续发送App数据，因为从client发出ClientHello到server收到有时间差），则i应该为1，从而继续后续流程。  
+```text
+     1029-1036行：如果已经处于Handshake状态，则直接调用s-&gt;handshake\_func\(\)函数处理消息：如果收到是handshake消息则直接处理，如果是Application数据（client在发出ClientHello之后可能不会立即回复ServerHello而是继续发送App数据，因为从client发出ClientHello到server收到有时间差），则i应该为1，从而继续后续流程。  
 
 
-         1261-1287行：如果收到了server发送的HelloRequest，则调用ssl3\_renegotiate\(\)，然后调用ssl3\_renegotiate\_check\(\)和s-&gt;handshake\_func\(\)。这个流程与client主动发起重协商的步骤是一样的，只不过是由HelloRequest消息触发而不是client主动设置的，不再赘述。
+     1261-1287行：如果收到了server发送的HelloRequest，则调用ssl3\_renegotiate\(\)，然后调用ssl3\_renegotiate\_check\(\)和s-&gt;handshake\_func\(\)。这个流程与client主动发起重协商的步骤是一样的，只不过是由HelloRequest消息触发而不是client主动设置的，不再赘述。
 
-         1328-1340行：这段代码允许server拒绝client发起的重协商，这个功能在5.2.1节中详细描述。
+     1328-1340行：这段代码允许server拒绝client发起的重协商，这个功能在5.2.1节中详细描述。
 
-         1432-1442行：Server收到ClientHello之后的处理，从中可以看出代码也会执行到s-&gt;handshake\_func\(\)。但与server主动发起重协商的不同之处在于没有通过调用ssl3\_renegotiate\_check\(\)-&gt;ossl\_statem\_set\_renegotiate\(\)将s-&gt;statem.state设置为MSG\_FLOW\_RENEGOTIATE，而仅仅是通过1436行的代码将s-&gt;statem.in\_init设置为1。这样导致server在s-&gt;handshake\_func\(\)中的处理逻辑与主动发起重协商的不同之处在于：
+     1432-1442行：Server收到ClientHello之后的处理，从中可以看出代码也会执行到s-&gt;handshake\_func\(\)。但与server主动发起重协商的不同之处在于没有通过调用ssl3\_renegotiate\_check\(\)-&gt;ossl\_statem\_set\_renegotiate\(\)将s-&gt;statem.state设置为MSG\_FLOW\_RENEGOTIATE，而仅仅是通过1436行的代码将s-&gt;statem.in\_init设置为1。这样导致server在s-&gt;handshake\_func\(\)中的处理逻辑与主动发起重协商的不同之处在于：
+```
 
 ```text
 218 static int state_machine(SSL *s, int server)
@@ -667,9 +723,11 @@
 ...
 ```
 
-         278行会被执行到，导致st-&gt;hand\_state的值为TLS\_ST\_BEFORE；如果是server主动发起重协商则st-&gt;hand\_state的值为TLS\_ST\_OK。在385-406行的处理流程中，如果st-&gt;hand\_state的值为TLS\_ST\_OK则server发出的是HelloRequest消息，如果是TLS\_ST\_BEFORE则会发ServerHello消息。这个流程的详细分析恕不展开。
+```text
+     278行会被执行到，导致st-&gt;hand\_state的值为TLS\_ST\_BEFORE；如果是server主动发起重协商则st-&gt;hand\_state的值为TLS\_ST\_OK。在385-406行的处理流程中，如果st-&gt;hand\_state的值为TLS\_ST\_OK则server发出的是HelloRequest消息，如果是TLS\_ST\_BEFORE则会发ServerHello消息。这个流程的详细分析恕不展开。
 
-        在Client端发出ClientHello之后，以及Server收到并处理完ClientHello之后，SSL\_write\(\)也可以处理后续重协商消息。SSL\_write\(\)最终会调用ssl3\_write\_bytes\(\)：
+    在Client端发出ClientHello之后，以及Server收到并处理完ClientHello之后，SSL\_write\(\)也可以处理后续重协商消息。SSL\_write\(\)最终会调用ssl3\_write\_bytes\(\)：
+```
 
 ```text
  339 /*
@@ -694,13 +752,17 @@
  387     }
 ```
 
-    379-385：如果已经处于Handshake状态，则直接调用s-&gt;handshake\_func\(\)函数处理消息；如果没有读到handshake消息，i应该为1，SSL\_write\(\)会继续发送数据。
+```text
+379-385：如果已经处于Handshake状态，则直接调用s-&gt;handshake\_func\(\)函数处理消息；如果没有读到handshake消息，i应该为1，SSL\_write\(\)会继续发送数据。
+```
 
 ### 5.2 安全重协商
 
 #### 5.2.1 安全重协商功能协商
 
-        OpenSSL 1.1的client在构建ClientHello的cipher list列表时会默认添加SSL3\_CK\_SCSV。它不是真正的密码套件（它不对应于任何有效的算法集合），且无法协商。它具有与空的“renegotiation\_info”扩展名相同的语义，表示支持安全重协商：
+```text
+    OpenSSL 1.1的client在构建ClientHello的cipher list列表时会默认添加SSL3\_CK\_SCSV。它不是真正的密码套件（它不对应于任何有效的算法集合），且无法协商。它具有与空的“renegotiation\_info”扩展名相同的语义，表示支持安全重协商：
+```
 
 ```text
 2906 int ssl_cipher_list_to_bytes(SSL *s,STACK_OF(SSL_CIPHER) *sk, unsigned char *p)
@@ -725,7 +787,9 @@
 ...
 ```
 
-         Server端在处理ClientHello时，如果发现了SSL3\_CK\_SCSV密码套件，则记录下来：
+```text
+     Server端在处理ClientHello时，如果发现了SSL3\_CK\_SCSV密码套件，则记录下来：
+```
 
 ```text
 3199 STACK_OF(SSL_CIPHER)* ssl_bytes_to_cipher_list(SSL *s,
@@ -755,7 +819,9 @@
 …
 ```
 
-         在发送ServerHello时添加重协商扩展：
+```text
+     在发送ServerHello时添加重协商扩展：
+```
 
 ```text
 1449 unsigned char* ssl_add_serverhello_tlsext(SSL *s, unsigned char *buf,   
@@ -790,7 +856,9 @@
 1494    }
 ```
 
-         在第一次handshake时，ServerHello中的重协商扩展为空：
+```text
+     在第一次handshake时，ServerHello中的重协商扩展为空：
+```
 
 ```text
  76 /* Add the server's renegotiationbinding */
@@ -825,13 +893,17 @@
 105 }
 ```
 
-         第一次handshake时s-&gt;s3-&gt;previous\_client\_finished\_len和
+```text
+     第一次handshake时s-&gt;s3-&gt;previous\_client\_finished\_len和
+```
 
 s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长度为1字节。
 
 #### 5.2.2 安全重协商功能使用
 
-         在client和server构建FINISHED消息时，会分别保存各自消息的Hash值：
+```text
+     在client和server构建FINISHED消息时，会分别保存各自消息的Hash值：
+```
 
 ```text
  60int tls_construct_finished(SSL *s, const char *sender, int slen)
@@ -866,7 +938,9 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
 …
 ```
 
-         在client和server收到FINISHED消息时，会分别保存对方消息的Hash值：
+```text
+     在client和server收到FINISHED消息时，会分别保存对方消息的Hash值：
+```
 
 ```text
  195 MSG_PROCESS_RETURN tls_process_finished(SSL *s, PACKET *pkt)
@@ -916,7 +990,9 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
  239 }
 ```
 
-         在发起重协商时，client会在ClientHello中添加重协商扩展：
+```text
+     在发起重协商时，client会在ClientHello中添加重协商扩展：
+```
 
 ```text
  968 unsigned char *ssl_add_clienthello_tlsext(SSL *s, unsigned char *buf,
@@ -948,7 +1024,9 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
 ...
 ```
 
-         在这个扩展中client只添加client\_finished信息，这与RFC 5746的要求一致：
+```text
+     在这个扩展中client只添加client\_finished信息，这与RFC 5746的要求一致：
+```
 
 ```text
  14 /* Add the client's renegotiationbinding */
@@ -976,7 +1054,9 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
  36 }
 ```
 
-         Server收到ClientHello后会检查重协商扩展：
+```text
+     Server收到ClientHello后会检查重协商扩展：
+```
 
 ```text
 1890 static int ssl_scan_clienthello_tlsext(SSL *s, PACKET *pkt, int *al)
@@ -1001,9 +1081,11 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
 2308    }
 ```
 
-         第2302-2307行：如果没有发现重协商扩展或重协商扩展检查不通过，则renegotiate\_seen为0；如果renegotiate\_seen为0，处于重协商过程中，没有“设置允许使用不安全重协商”，这三个条件同时满足，则中止handshake。
+```text
+     第2302-2307行：如果没有发现重协商扩展或重协商扩展检查不通过，则renegotiate\_seen为0；如果renegotiate\_seen为0，处于重协商过程中，没有“设置允许使用不安全重协商”，这三个条件同时满足，则中止handshake。
 
-         根据RFC 5746的要求，Server需要检查client finished信息：
+     根据RFC 5746的要求，Server需要检查client finished信息：
+```
 
 ```text
  38 /*
@@ -1045,9 +1127,11 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
  74 }
 ```
 
-         检查通过则重协商handshake正常进行。后续Server会发送ServerHello，并在其中的重协商扩展中添加上次handshake保存的client finished和server finished信息。详见：ssl\_add\_serverhello\_renegotiate\_ext\(\)。
+```text
+     检查通过则重协商handshake正常进行。后续Server会发送ServerHello，并在其中的重协商扩展中添加上次handshake保存的client finished和server finished信息。详见：ssl\_add\_serverhello\_renegotiate\_ext\(\)。
 
-        Client在收到ServerHello后的会解析重协商扩展：
+    Client在收到ServerHello后的会解析重协商扩展：
+```
 
 ```text
 2354 static int ssl_scan_serverhello_tlsext(SSL *s, PACKET *pkt, int *al)
@@ -1080,7 +1164,9 @@ s-&gt;s3-&gt;previous\_server\_finished\_len都为0，故重协商扩展的长�
 …
 ```
 
-         2635-2640行：如果没有发现重协商扩展或重协商扩展检查不通过，则renegotiate\_seen为0；如果renegotiate\_seen为0，没有设置“允许server不支持重协商”（此标签默认设置），没有设置“允许使用不安全重协商”，这三个条件同时满足，则中止handshake。
+```text
+     2635-2640行：如果没有发现重协商扩展或重协商扩展检查不通过，则renegotiate\_seen为0；如果renegotiate\_seen为0，没有设置“允许server不支持重协商”（此标签默认设置），没有设置“允许使用不安全重协商”，这三个条件同时满足，则中止handshake。
+```
 
 Client在检查重协商扩展时，如果扩展的内容为0（第一次handshake）则只是做个标记，如果非空则对比client\_finished和server\_finished消息：
 
@@ -1146,13 +1232,17 @@ Client在检查重协商扩展时，如果扩展的内容为0（第一次handsha
 165 }
 ```
 
-         如果检查通过则执行正常的handshake流程。在handshake的最后阶段双方会用本次会话中的FINISHED消息的hash值刷新各自的client\_finished和server\_finished缓存，留待下次重协商时使用。    
+```text
+     如果检查通过则执行正常的handshake流程。在handshake的最后阶段双方会用本次会话中的FINISHED消息的hash值刷新各自的client\_finished和server\_finished缓存，留待下次重协商时使用。    
+```
 
 ## 6. 重协商功能配置策略
 
 ### 6.1 Server禁止\|限制client发起重协商
 
-         OpenSSL1.1在handshake过程中设置了一个call\_back点，允许用户通过call\_back函数来实现定制的操作：
+```text
+     OpenSSL1.1在handshake过程中设置了一个call\_back点，允许用户通过call\_back函数来实现定制的操作：
+```
 
 ```text
 218 static int state_machine(SSL *s, intserver)
@@ -1174,7 +1264,9 @@ Client在检查重协商扩展时，如果扩展的内容为0（第一次handsha
 …
 ```
 
-         由这段代码和5.1.3节中的分析可知，第一次handshake和重协商的handshake都会执行一次283行的call\_back函数（如果是server发起的重协商，在发送HelloRequest时也会执行一次call\_back）。故可以通过SSL\_CTX\_set\_info\_callback\(SSL\_CTX \*ctx, void \(\*cb\) \(const SSL \*ssl,int type, int val\)\)函数设置call back函数，在server端实现对client发起的重协商进行次数\|频率的限制。Call\_back函数举例：
+```text
+     由这段代码和5.1.3节中的分析可知，第一次handshake和重协商的handshake都会执行一次283行的call\_back函数（如果是server发起的重协商，在发送HelloRequest时也会执行一次call\_back）。故可以通过SSL\_CTX\_set\_info\_callback\(SSL\_CTX \*ctx, void \(\*cb\) \(const SSL \*ssl,int type, int val\)\)函数设置call back函数，在server端实现对client发起的重协商进行次数\|频率的限制。Call\_back函数举例：
+```
 
 ```text
  static void 
@@ -1190,24 +1282,30 @@ Client在检查重协商扩展时，如果扩展的内容为0（第一次handsha
 
 ### 6.2 彻底禁用重协商
 
-       从5.1节的代码可以得知，如果设置SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS标签，则client和server都不能发起重协商也不能处理重协商消息：
+```text
+   从5.1节的代码可以得知，如果设置SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS标签，则client和server都不能发起重协商也不能处理重协商消息：
+```
 
 s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 
-        对于OpenSSL 1.0，上述方法没有问题，但对于OpenSSL1.1，由于结构体的定义被隐藏，而且没有发现任何能够设置s-&gt;s3-&gt;flags的接口，导致OpenSSL的用户无法直接设置这个标签，从而无法完全禁用重协商功能（可以使用6.1节中介绍的call\_back机制来禁止对端发起重协商）。对此个人的理解是由于OpenSSL 1.1默认开启安全重协商功能，使得开启重协商功能带来的安全威胁大大缓解；而且禁用重协商的代价比较大，故不允许用户禁用重协商功能。SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS标签可能留待内部使用。
+```text
+    对于OpenSSL 1.0，上述方法没有问题，但对于OpenSSL1.1，由于结构体的定义被隐藏，而且没有发现任何能够设置s-&gt;s3-&gt;flags的接口，导致OpenSSL的用户无法直接设置这个标签，从而无法完全禁用重协商功能（可以使用6.1节中介绍的call\_back机制来禁止对端发起重协商）。对此个人的理解是由于OpenSSL 1.1默认开启安全重协商功能，使得开启重协商功能带来的安全威胁大大缓解；而且禁用重协商的代价比较大，故不允许用户禁用重协商功能。SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS标签可能留待内部使用。
 
-        对于Client，设置此标签可以忽略Server发来的HelloRequest请求，忽略之后对双方的数据交互没有影响；如果Server设置了此标签，则会忽略Client发送的ClientHello，但Client会一直处于“等待”ServerHello的状态从而无法发送和接收应用数据。  
+    对于Client，设置此标签可以忽略Server发来的HelloRequest请求，忽略之后对双方的数据交互没有影响；如果Server设置了此标签，则会忽略Client发送的ClientHello，但Client会一直处于“等待”ServerHello的状态从而无法发送和接收应用数据。  
 
 
-        不推荐此选项。
+    不推荐此选项。
+```
 
 ### 6.3 允许不安全的重协商
 
 #### 6.3.1 Server端允许不安全的重协商
 
-         不支持安全重协商的client在发送ClientHello时不会携带SSL3\_CK\_SCSV密码族，默认情况下无论是client还是server发起重协商都是不允许的：
+```text
+     不支持安全重协商的client在发送ClientHello时不会携带SSL3\_CK\_SCSV密码族，默认情况下无论是client还是server发起重协商都是不允许的：
 
-         Server发送HelloRequest：
+     Server发送HelloRequest：
+```
 
 ```text
 218 static int state_machine(SSL *s, intserver)
@@ -1231,7 +1329,9 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 ..
 ```
 
-         Server接收重协商的ClientHello：
+```text
+     Server接收重协商的ClientHello：
+```
 
 ```text
  975 int ssl3_read_bytes(SSL *s, int type,int *recvd_type, unsigned char *buf,
@@ -1259,9 +1359,11 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 …
 ```
 
-        SSL\_is\_init\_finished\(s\) 为真意味着第一次handshake已经结束，s-&gt;s3-&gt;send\_connection\_binding为0表示server没有在ClientHello中发现SCSV密码族或安全重协商扩展，这两个条件同时成立意味着server收到的重协商请求\(ClientHello\)中没有安全重协商信息。这时需要发送NO\_RENEGOTIATION Alert。
+```text
+    SSL\_is\_init\_finished\(s\) 为真意味着第一次handshake已经结束，s-&gt;s3-&gt;send\_connection\_binding为0表示server没有在ClientHello中发现SCSV密码族或安全重协商扩展，这两个条件同时成立意味着server收到的重协商请求\(ClientHello\)中没有安全重协商信息。这时需要发送NO\_RENEGOTIATION Alert。
 
-        如果在重协商的过程中\(server 发起重协商），ClientHello中没有重协商扩展也是不被允许的：
+    如果在重协商的过程中\(server 发起重协商），ClientHello中没有重协商扩展也是不被允许的：
+```
 
 ```text
 1890 static int ssl_scan_clienthello_tlsext(SSL *s, PACKET *pkt, int *al)
@@ -1277,21 +1379,27 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 …
 ```
 
-         由代码中也可以看出，如果：
+```text
+     由代码中也可以看出，如果：
 
-        s-&gt;options& SSL\_OP\_ALLOW\_UNSAFE\_LEGACY\_RENEGOTIATION为真，则上述两种情况下的不安全重协商都是允许的。这个设置可以通过：
+    s-&gt;options& SSL\_OP\_ALLOW\_UNSAFE\_LEGACY\_RENEGOTIATION为真，则上述两种情况下的不安全重协商都是允许的。这个设置可以通过：
 
-        SSL\_set\_options\(s,SSL\_OP\_ALLOW\_UNSAFE\_LEGACY\_RENEGOTIATION\);
+    SSL\_set\_options\(s,SSL\_OP\_ALLOW\_UNSAFE\_LEGACY\_RENEGOTIATION\);
+```
 
 实现。
 
-         不推荐此选项。
+```text
+     不推荐此选项。
+```
 
 #### 6.3.2 Client端允许不安全的重协商
 
-         与server端不同，client默认允许不安全的重协商。原因是在针对重协商的攻击中client并未参与重协商流程，如果默认禁止连接所有不支持安全重协商的server则代价太大。
+```text
+     与server端不同，client默认允许不安全的重协商。原因是在针对重协商的攻击中client并未参与重协商流程，如果默认禁止连接所有不支持安全重协商的server则代价太大。
 
-         接收ServerHello：
+     接收ServerHello：
+```
 
 ```text
 2354 static int ssl_scan_serverhello_tlsext(SSL *s, PACKET *pkt, int *al)
@@ -1313,8 +1421,9 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 2641    }
 ```
 
-        s-&gt;options& SSL\_OP\_LEGACY\_SERVER\_CONNECT默认为真：  
-
+```text
+    s-&gt;options& SSL\_OP\_LEGACY\_SERVER\_CONNECT默认为真：  
+```
 
 ```text
 2349 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
@@ -1328,14 +1437,17 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 …
 ```
 
-         故client默认不会拒绝不支持安全重协商的server。要取消此默认设置可以调用：
+```text
+     故client默认不会拒绝不支持安全重协商的server。要取消此默认设置可以调用：
 
-         SSL\_CTX\_clear\_options\(ctx,SSL\_OP\_LEGACY\_SERVER\_CONNECT\);
+     SSL\_CTX\_clear\_options\(ctx,SSL\_OP\_LEGACY\_SERVER\_CONNECT\);
 
-        用户可根据自身情况设置默认策略。
+    用户可根据自身情况设置默认策略。
+```
 
 ### 6.4 Client禁止发起重协商
 
-        由于Client发起重协商的条件不明，而且这种应用方式基本绝迹，故建议Client不要支持发起重协商。  
-
+```text
+    由于Client发起重协商的条件不明，而且这种应用方式基本绝迹，故建议Client不要支持发起重协商。  
+```
 

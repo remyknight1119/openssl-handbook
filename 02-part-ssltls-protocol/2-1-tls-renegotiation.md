@@ -1,4 +1,4 @@
-# 五、TLS重协商
+# 五、TLS Renegotiation
 
 ## 一、什么是重协商
 

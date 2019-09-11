@@ -11,8 +11,10 @@
 
 ## 第二部分 SSL/TLS Protocol <a id="02-part-ssltls-protocol"></a>
 
-* [五、TLS重协商](02-part-ssltls-protocol/tls-renegotiation.md)
-* [六、SNI](02-part-ssltls-protocol/sni.md)
+* [五、TLS Renegotiation](02-part-ssltls-protocol/2-1-tls-renegotiation.md)
+* [六、SNI](02-part-ssltls-protocol/2-2-sni.md)
+* [七、Certificate Chain](02-part-ssltls-protocol/2-3-certificate-chain.md)
+* [八、OCSP Stapling](02-part-ssltls-protocol/2-4-ocsp-stapling.md)
 
 ## 第三部分 DTLS Protocol <a id="03-part-dtls-protocol"></a>
 

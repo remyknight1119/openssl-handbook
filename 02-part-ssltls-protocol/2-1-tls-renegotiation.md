@@ -2,77 +2,53 @@
 
 ## 1. 什么是重协商
 
-```text
-大部分TLS连接都以handshake为开始，经过应用数据的交换，最后关闭会话。如果在第一次handshake之后（可能经历了应用数据的交换也可能没有）请求重新协商，就会发起一次新的handshake，对新的安全参数达成一致。重协商的handshake的消息都是全部加密的，这与第一次handshake明显不同。
+    大部分TLS连接都以handshake为开始，经过应用数据的交换，最后关闭会话。如果在第一次handshake之后（可能经历了应用数据的交换也可能没有）请求重新协商，就会发起一次新的handshake，对新的安全参数达成一致。重协商的handshake的消息都是全部加密的，这与第一次handshake明显不同。
 
-重协商功能应用场景举例：
-```
-
+    重协商功能应用场景举例：
 \*\) Client证书：可以设置访问网站的根路径不要求client携带证书，而在client访问特定子区域时server发起重协商请求，要求client携带证书；
-
 \*\) 隐藏消息：由于重协商的handshake消息是加密的，被动攻击者无法监视协商过程，这样就可以隐藏一些敏感信息（比如证书中包含的身份识别信息）。
 
 ## 2. 怎样发起重协商
 
-```text
-有两种方式可以发起重协商：
-```
-
+    有两种方式可以发起重协商：
 \*\)Client发起：TLS协议允许client在任意时间简单地发送新的ClientHello消息请求重新协商，就如同建立一个新的连接一样；
-
 \*\)Server发起：如果server希望重新协商，它会发送HelloRequest消息给client，这个消息通知client停止发送应用数据，并开始新的handshake。
 
 ## 3. 重协商的安全性
 
-```text
-重协商机制并不安全，针对重协商的攻击类型如下：
-```
+    重协商机制并不安全，针对重协商的攻击类型如下：
 
 ### 3.1 DoS攻击
 
-```text
-TLS的handshake过程需要使用非对称算法进行身份认证和密钥协商，这个过程需要很多计算资源。Handshake本来只在TLS连接开始建立时执行一次，但由于重协商机制的引入，使得client被允许不断发起新的handshake。由于client可以使用较少的资源来执行handshake（比如：不检查server的证书，这样可以避免校验签名的开销），这样攻击者就可以更容易地耗尽server的资源导致其拒绝为其它用户的请求提供服务。
+    TLS的handshake过程需要使用非对称算法进行身份认证和密钥协商，这个过程需要很多计算资源。Handshake本来只在TLS连接开始建立时执行一次，但由于重协商机制的引入，使得client被允许不断发起新的handshake。由于client可以使用较少的资源来执行handshake（比如：不检查server的证书，这样可以避免校验签名的开销），这样攻击者就可以更容易地耗尽server的资源导致其拒绝为其它用户的请求提供服务。
 
-     这种攻击与分布式拒绝服务攻击\(DDoS\)的不同之处在于，它不需要大量的攻击来消耗网络带宽，而仅仅通过一台主机的一个TCP/IP socket来耗尽server的资源（这样就会导致当前的DoS和DDoS防御策略无效）。例如，一台server通常能执行150-300次/s握手，而一个client可以发起多达1000次/s握手请求。
+    这种攻击与分布式拒绝服务攻击\(DDoS\)的不同之处在于，它不需要大量的攻击来消耗网络带宽，而仅仅通过一台主机的一个TCP/IP socket来耗尽server的资源（这样就会导致当前的DoS和DDoS防御策略无效）。例如，一台server通常能执行150-300次/s握手，而一个client可以发起多达1000次/s握手请求。
 
-     防御方法：
-```
-
+    防御方法：
 1\) 禁用重协商功能：不推荐，因为这样会导致依赖重协商的特性无法使用；
-
 2\) 禁止client发起重协商：目前看来似乎是个不错的选择；
-
 3\) 速率限制：对新到来的TLS连接和重协商的速率进行限制；
-
 4\) 使用SSL加速卡：通过极大地提高server对handshake的处理能力来增加攻击的成本，但可能攻击者只增加一到两台主机进行攻击就可以使得此措施无效。
 
 ### 3.2 中间人攻击
 
-```text
 由于TLS的重协商前后的两条TLS连接之间没有关联（即使它们发生在同一条TCP连接上），而且应用层（如HTTP）与加密层很少交互（例如，如果重协商发生在HTTP请求的过程中，上层应用是得不到通知的），导致TLS层面发生的事情与上层应用了解到的信息不匹配。
 
 因此，一个中间人（man-in-the-middle，MITM）攻击者就可以通过如下步骤来利用这个漏洞：
-```
 
 1\) 拦截一个client到server的TCP连接，截住其TLS handshake请求；
-
 2\) 新建一个到server的TLS连接，在handshake之后发送攻击负载；
-
 3\) 将1\)中拦截的handshake请求通过与server的TLS连接发送过去，这样在server看来是重协商，而在client看来是一条全新的TLS连接。一旦重协商完成，client与server开始交换应用层数据，攻击者的攻击负载和client的正常数据就会被server合并处理，从而使得攻击成功。
 
-```text
 攻击过程（举例）的示意图如下：
-```
 
 ![Figure 1. Renegotiation Attack](../.gitbook/assets/renego1.png)
 
-```text
 这种攻击会使得server执行攻击者制定的任意GET请求。
 
 对于这种MITM攻击，即使禁止了client发起重协商，依赖于client证书校验和支持SGC的网站仍然容易遭到攻击。因为攻击者只需要调查网站在哪些情况下是需要进行重协商的，如果条件得到满足则攻击者就可以开展攻击行为。
 
 防御方法：
-```
 
 1）禁用重协商功能：不推荐，除了会使得依赖重协商的特性无法使用外，还会导致增加了网络上重协商功能的不确定性，使得client无法有效保护自己【注1】
 
@@ -82,9 +58,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 
 ## 4. 安全重协商
 
-```text
 为了解决中间人攻击的问题，【RFC5764】提出了“安全重协商”机制。本质很简单，就是关联两次握手，方式是提供了一个新的扩展（renegotiation\_info）。SSLv3/TLS 1.0不支持扩展，为了使其支持安全重协商，client需要发送**TLS\_EMPTY\_RENEGOTIATION\_INFO\_SCSV（0xFF）密码套件**（缩写为SCSV）**。**
-```
 
 **安全重协商的流程如下：**
 
@@ -100,10 +74,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 
 #### 5.1.1 SSL\_renegotiate
 
-```text
      Client和server只需调用SSL\_renegotiate\(ssl\)函数即可完成发起重协商的设置。SSL\_renegotiate\(\)函数定义如下：
-```
-
 ```text
 1641 int SSL_renegotiate(SSL *s)
 1642 {
@@ -116,9 +87,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 1649 }
 ```
 
-```text
      对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，s-&gt;method-&gt;ssl\_renegotiate指向ssl3\_renegotiate\(\)：
-```
 
 ```text
 3865 int ssl3_renegotiate(SSL *s)
@@ -134,15 +103,11 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 3875 }
 ```
 
-```text
  可见，SSL\_renegotiate\(\)函数只是将s-&gt;s3-&gt;renegotiate设置为1而已，并不是发送重协商报文（Handshake，HelloRequest）。发送重协商报文是在SSL\_write\(\)或SSL\_read\(\)函数被调用的时候进行的：
-```
 
 #### 5.1.2 发送第一个消息
 
-```text
      先来看SSL\_write\(\)函数。对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，SSL\_write\(\)最终都会调用ssl3\_write\(\)函数：
-```
 
 ```text
 3816 int ssl3_write(SSL *s, const void *buf, int len)
@@ -155,9 +120,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 3823 }
 ```
 
-```text
      由于之前调用的SSL\_renegotiate\(\)函数将s-&gt;s3-&gt;renegotiate设置为1，故会在3820行调用到ssl3\_renegotiate\_check\(\)函数：
-```
 
 ```text
 3877 int ssl3_renegotiate_check(SSL *s)
@@ -184,9 +147,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 3898 }
 ```
 
-```text
      其中的关键代码是3890行ossl\_statem\_set\_renegotiate\(\)函数：
-```
 
 ```text
 103 /*      
@@ -199,9 +160,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 110 }
 ```
 
-```text
 调用完ssl3\_renegotiate\_check\(\)函数之后，ssl3\_write\(\)会调用s-&gt;method-&gt;ssl\_write\_bytes指向的ssl3\_write\_bytes\(\)函数：
-```
 
 ```text
 343 int ssl3_write_bytes(SSL *s, int type, const void *buf_, int len)
@@ -219,9 +178,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 …
 ```
 
-```text
 其中SSL\_in\_init\(s\)的返回值会是1：
-```
 
 ```text
 69 int SSL_in_init(SSL *s)
@@ -230,9 +187,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 72 }
 ```
 
-```text
      由于是在handshake结束之后调用，故ossl\_statem\_get\_in\_handshake\(s\)的返回值会是0：
-```
 
 ```text
 141 int ossl_statem_get_in_handshake(SSL *s)
@@ -241,11 +196,9 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 144 }
 ```
 
-```text
      故ssl3\_write\_bytes\(\)会执行380行s-&gt;handshake\_func\(s\)。
 
      再来看SSL\_read\(\)。对于TLS\_client\_method\(\)和TLS\_server\_method\(\)，这个函数最终会调用ssl3\_read\(\)：
-```
 
 ```text
 3825 static int ssl3_read_internal(SSL *s, void *buf, int len, int peek)
@@ -284,9 +237,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 3858 }
 ```
 
-```text
      调用SSL\_renegotiate\(\)后3831行会被执行，其影响见上文对SSL\_write\(\)函数的分析。s-&gt;method-&gt;ssl\_read\_bytes\(\)指向ssl3\_read\_bytes\(\)：
-```
 
 ```text
 975 int ssl3_read_bytes(SSL *s, int type, int *recvd_type, unsigned char *buf,
@@ -306,9 +257,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 …
 ```
 
-```text
 最后SSL\_read\(\)会执行1031行代码。可见在调用SSL\_renegotiate\(\)开启协商功能后，SSL\_write\(\)和SSL\_read\(\)都会调用s-&gt;handshake\_func\(s\)，对于client会调用到ossl\_statem\_connect：
-```
 
 ```text
 168 int ossl_statem_connect(SSL *s)
@@ -317,9 +266,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 171 }
 ```
 
-```text
      对于server则会调用ossl\_statem\_accept\(\)：
-```
 
 ```text
 173 int ossl_statem_accept(SSL *s)
@@ -328,9 +275,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 176 }
 ```
 
-```text
      它们都会调用state\_machine\(\)：
-```
 
 ```text
 218 static int state_machine(SSL *s, int server)
@@ -380,9 +325,7 @@ TLS的handshake过程需要使用非对称算法进行身份认证和密钥协�
 414     ret = 1;
 ```
 
-```text
      由于执行了380行，故396行write\_state\_machine\(\)会执行：
-```
 
 ```text
 704 static SUB_STATE_RETURN write_state_machine(SSL *s)
@@ -1395,11 +1338,9 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 
 #### 6.3.2 Client端允许不安全的重协商
 
-```text
      与server端不同，client默认允许不安全的重协商。原因是在针对重协商的攻击中client并未参与重协商流程，如果默认禁止连接所有不支持安全重协商的server则代价太大。
 
      接收ServerHello：
-```
 
 ```text
 2354 static int ssl_scan_serverhello_tlsext(SSL *s, PACKET *pkt, int *al)
@@ -1421,9 +1362,7 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 2641    }
 ```
 
-```text
     s-&gt;options& SSL\_OP\_LEGACY\_SERVER\_CONNECT默认为真：  
-```
 
 ```text
 2349 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
@@ -1437,17 +1376,13 @@ s-&gt;s3-&gt;flags& SSL3\_FLAGS\_NO\_RENEGOTIATE\_CIPHERS
 …
 ```
 
-```text
      故client默认不会拒绝不支持安全重协商的server。要取消此默认设置可以调用：
 
      SSL\_CTX\_clear\_options\(ctx,SSL\_OP\_LEGACY\_SERVER\_CONNECT\);
 
     用户可根据自身情况设置默认策略。
-```
 
 ### 6.4 Client禁止发起重协商
 
-```text
     由于Client发起重协商的条件不明，而且这种应用方式基本绝迹，故建议Client不要支持发起重协商。  
-```
 

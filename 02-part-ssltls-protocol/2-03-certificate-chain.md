@@ -1,6 +1,6 @@
 # 七、Certificate Chain
 
-    SSL的CA证书可分为两种：Root CA（根CA证书）和Intermediate CA（中间CA证书）。其中Root CA是信任锚点，一条证书链中只能有一个。Intermediate CA可以有多个。Root CA通常不直接签发用户证书，而是签发Intermediate CA，由Intermediate CA来签发终用户书。它们之间的关系如下图所示：
+       SSL的CA证书可分为两种：Root CA（根CA证书）和Intermediate CA（中间CA证书）。其中Root CA是信任锚点，一条证书链中只能有一个。Intermediate CA可以有多个。Root CA通常不直接签发用户证书，而是签发Intermediate CA，由Intermediate CA来签发终用户书。它们之间的关系如下图所示：
 
 ![](https://img-blog.csdn.net/20170728125047197?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvdTAxMTEzMDU3OA==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center)
 

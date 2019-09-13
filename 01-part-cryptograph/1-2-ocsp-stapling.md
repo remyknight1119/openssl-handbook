@@ -1,2 +1,0 @@
-# 二、OCSP Stapling
-

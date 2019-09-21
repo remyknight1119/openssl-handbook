@@ -18,7 +18,8 @@
 * [九、OCSP Stapling](02-part-ssltls-protocol/2-06-ocsp-stapling.md)
 * [十、Cipher](02-part-ssltls-protocol/02-06-cipher.md)
 * [十一、Session reuse](02-part-ssltls-protocol/02-07-session-reuse.md)
-* [Untitled](02-part-ssltls-protocol/untitled.md)
+* [十二、SSL Version](02-part-ssltls-protocol/02-08-ssl-version.md)
+* [Untitled](02-part-ssltls-protocol/untitled-1.md)
 * [Untitled](02-part-ssltls-protocol/untitled-2.md)
 
 ## 第三部分 DTLS Protocol <a id="03-part-dtls-protocol"></a>

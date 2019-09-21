@@ -287,6 +287,74 @@ ssl_create_cipher_list:
 
 ```
 
+824-853: 过滤掉不相关的cipher.
+
+```text
+ 855 #ifdef CIPHER_DEBUG
+ 856         fprintf(stderr, "Action = %d\n", rule);
+ 857 #endif
+ 858 
+ 859         /* add the cipher if it has not been added yet. */
+ 860         if (rule == CIPHER_ADD) {
+ 861             /* reverse == 0 */
+ 862             if (!curr->active) {
+ 863                 ll_append_tail(&head, curr, &tail);
+ 864                 curr->active = 1;
+ 865             }
+ 866         }
+ 867         /* Move the added cipher to this location */
+ 868         else if (rule == CIPHER_ORD) {
+ 869             /* reverse == 0 */
+ 870             if (curr->active) {
+ 871                 ll_append_tail(&head, curr, &tail);
+ 872             }
+ 873         } else if (rule == CIPHER_DEL) {
+ 874             /* reverse == 1 */
+ 875             if (curr->active) {
+ 876                 /*
+ 877                  * most recently deleted ciphersuites get best positions for
+ 878                  * any future CIPHER_ADD (note that the CIPHER_DEL loop works
+ 879                  * in reverse to maintain the order)
+ 880                  */
+ 881                 ll_append_head(&head, curr, &tail);
+ 882                 curr->active = 0;
+ 883             }
+ 884         } else if (rule == CIPHER_BUMP) {
+ 885             if (curr->active)
+ 886                 ll_append_head(&head, curr, &tail);
+ 887         } else if (rule == CIPHER_KILL) {
+ 888             /* reverse == 0 */
+ 889             if (head == curr)
+ 890                 head = curr->next;
+ 891             else
+ 892                 curr->prev->next = curr->next;
+ 893             if (tail == curr)
+ 894                 tail = curr->prev;
+ 895             curr->active = 0;
+ 896             if (curr->next != NULL)
+ 897                 curr->next->prev = curr->prev;
+ 898             if (curr->prev != NULL)
+ 899                 curr->prev->next = curr->next;
+ 900             curr->next = NULL;
+ 901             curr->prev = NULL;
+ 902         }
+ 903     }
+ 904 
+ 905     *head_p = head;
+ 906     *tail_p = tail;
+ 907 }
+```
+
+860-866: 如果curr是未激活且rule == CIPHER\_ADD，就将其移动到队尾；
+
+868-872: 如果curr是激活的且rule == CIPHER\_ORD，就将其移动到队尾；
+
+873-883: 如果curr是未激活且rule == CIPHER\_DEL，就将其移动到队头；
+
+884-886: 如果curr是激活的且rule == CIPHER\_BUMP，就将其移动到队头；
+
+887-903: 如果rule == CIPHER\_KILL，从队列中删除curr。
+
 
 
 ### 2.3 SSL version的影响

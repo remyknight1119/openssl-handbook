@@ -734,7 +734,17 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 这是在SSL CTX初始化时设置cipher list，效果与SSL\_CTX\_set\_ssl\_version\(\)一致。
 
-## 3. Client Cipher List
+## 3. Cipher List in SSL handshake
+
+### 3.1 ClientHello
+
+
+
+### 3.2 Server process ClientHello
+
+### 
+
+### 3.3 ServerHello
 
 
 

@@ -103,9 +103,246 @@ SSL\_CTX\_use\_certificate\(\)可以用来加载证书：
 
 ### 2.2 Load Certificate Chain
 
+SSL\_CTX\_add0\_chain\_cert\(\)和SSL\_CTX\_add1\_chain\_cert\(\)函数用来加载证书链:
 
+```text
+1345 # define SSL_CTX_add0_chain_cert(ctx,x509) \
+1346         SSL_CTX_ctrl(ctx,SSL_CTRL_CHAIN_CERT,0,(char *)(x509))
+1347 # define SSL_CTX_add1_chain_cert(ctx,x509) \
+1348         SSL_CTX_ctrl(ctx,SSL_CTRL_CHAIN_CERT,1,(char *)(x509))
+```
+
+```text
+2270 long SSL_CTX_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
+2271 {
+2272     long l;
+2273     /* For some cases with ctx == NULL perform syntax checks */
+2274     if (ctx == NULL) {
+2275         switch (cmd) {
+2276 #ifndef OPENSSL_NO_EC
+2277         case SSL_CTRL_SET_GROUPS_LIST:
+2278             return tls1_set_groups_list(NULL, NULL, parg);
+2279 #endif
+2280         case SSL_CTRL_SET_SIGALGS_LIST:
+2281         case SSL_CTRL_SET_CLIENT_SIGALGS_LIST:
+2282             return tls1_set_sigalgs_list(NULL, parg, 0);
+2283         default:
+2284             return 0;
+2285         }
+2286     }
+2287 
+2288     switch (cmd) {
+...
+2385     default:
+2386         return ctx->method->ssl_ctx_ctrl(ctx, cmd, larg, parg);
+2387     }
+2388 }
+```
+
+ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
+
+```text
+3763 long ssl3_ctx_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
+3764 {
+3765     switch (cmd) {      
+...
+3984     case SSL_CTRL_CHAIN_CERT:
+3985         if (larg)
+3986             return ssl_cert_add1_chain_cert(NULL, ctx, (X509 *)parg);
+3987         else
+3988             return ssl_cert_add0_chain_cert(NULL, ctx, (X509 *)parg);
+...
+```
+
+```text
+ 288 int ssl_cert_add0_chain_cert(SSL *s, SSL_CTX *ctx, X509 *x)
+ 289 {
+ 290     int r;
+ 291     CERT_PKEY *cpk = s ? s->cert->key : ctx->cert->key;
+ 292     if (!cpk)
+ 293         return 0;
+ 294     r = ssl_security_cert(s, ctx, x, 0, 0);
+ 295     if (r != 1) {
+ 296         SSLerr(SSL_F_SSL_CERT_ADD0_CHAIN_CERT, r);
+ 297         return 0;
+ 298     }
+ 299     if (!cpk->chain)
+ 300         cpk->chain = sk_X509_new_null();
+ 301     if (!cpk->chain || !sk_X509_push(cpk->chain, x))
+ 302         return 0;
+ 303     return 1;
+ 304 }
+ 305 
+ 306 int ssl_cert_add1_chain_cert(SSL *s, SSL_CTX *ctx, X509 *x)
+ 307 {
+ 308     if (!ssl_cert_add0_chain_cert(s, ctx, x))
+ 309         return 0;
+ 310     X509_up_ref(x);
+ 311     return 1;
+ 312 }
+```
+
+291: cpk指向ssl\_set\_cert\(\)中所设置的快捷方式;
+
+294: 根据安全等级\(security level\)检查密钥强度等;
+
+301: 将证书加入到与之前的终端证书\(server用户证书\)相同的数组中。
 
 ### 2.3 Server Certificate Chain
+
+SSL Server收到ClientHello后，需要构建Server Ceritificate来回应:
+
+```text
+3774 int tls_construct_server_certificate(SSL *s, WPACKET *pkt)
+3775 {
+3776     CERT_PKEY *cpk = s->s3->tmp.cert;
+3777 
+3778     if (cpk == NULL) {
+3779         SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+3780                  SSL_F_TLS_CONSTRUCT_SERVER_CERTIFICATE, ERR_R_INTERNAL_ERROR);
+3781         return 0;
+3782     }
+3783 
+3784     /*
+3785      * In TLSv1.3 the certificate chain is always preceded by a 0 length context
+3786      * for the server Certificate message
+3787      */
+3788     if (SSL_IS_TLS13(s) && !WPACKET_put_bytes_u8(pkt, 0)) {
+3789         SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+3790                  SSL_F_TLS_CONSTRUCT_SERVER_CERTIFICATE, ERR_R_INTERNAL_ERROR);
+3791         return 0;
+3792     }
+3793     if (!ssl3_output_cert_chain(s, pkt, cpk)) {
+3794         /* SSLfatal() already called */
+3795         return 0;
+3796     }
+3797 
+3798     return 1;
+3799 }
+```
+
+ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息中:
+
+```text
+ 998 unsigned long ssl3_output_cert_chain(SSL *s, WPACKET *pkt, CERT_PKEY *cpk)
+ 999 {
+1000     if (!WPACKET_start_sub_packet_u24(pkt)) {
+1001         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL3_OUTPUT_CERT_CHAIN,
+1002                  ERR_R_INTERNAL_ERROR);
+1003         return 0;
+1004     }            
+1005         
+1006     if (!ssl_add_cert_chain(s, pkt, cpk))
+1007         return 0;
+1008     
+1009     if (!WPACKET_close(pkt)) {
+1010         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL3_OUTPUT_CERT_CHAIN,
+1011                  ERR_R_INTERNAL_ERROR);
+1012         return 0;
+1013     }   
+1014                  
+1015     return 1;
+1016 }   
+```
+
+```text
+ 901 /* Add certificate chain to provided WPACKET */
+ 902 static int ssl_add_cert_chain(SSL *s, WPACKET *pkt, CERT_PKEY *cpk)
+ 903 {
+ 904     int i, chain_count;
+ 905     X509 *x;
+ 906     STACK_OF(X509) *extra_certs;
+ 907     STACK_OF(X509) *chain = NULL;
+ 908     X509_STORE *chain_store;
+ 909 
+ 910     if (cpk == NULL || cpk->x509 == NULL)
+ 911         return 1;
+ 912 
+ 913     x = cpk->x509;
+ 914 
+ 915     /*
+ 916      * If we have a certificate specific chain use it, else use parent ctx.
+ 917      */
+ 918     if (cpk->chain != NULL)
+ 919         extra_certs = cpk->chain;
+ 920     else
+ 921         extra_certs = s->ctx->extra_certs;
+ 922 
+ 923     if ((s->mode & SSL_MODE_NO_AUTO_CHAIN) || extra_certs)
+ 924         chain_store = NULL;
+ 925     else if (s->cert->chain_store)
+ 926         chain_store = s->cert->chain_store;
+ 927     else
+ 928         chain_store = s->ctx->cert_store;
+ 929 
+ 930     if (chain_store != NULL) {
+ 931         X509_STORE_CTX *xs_ctx = X509_STORE_CTX_new();
+ 932 
+ 933         if (xs_ctx == NULL) {
+ 934             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_ADD_CERT_CHAIN,
+ 935                      ERR_R_MALLOC_FAILURE);
+ 936             return 0;
+ 937         }
+ 938         if (!X509_STORE_CTX_init(xs_ctx, chain_store, x, NULL)) {
+ 939             X509_STORE_CTX_free(xs_ctx);
+ 940             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_ADD_CERT_CHAIN,
+ 941                      ERR_R_X509_LIB);
+ 942             return 0;
+ 943         }
+ 944         /*
+ 945          * It is valid for the chain not to be complete (because normally we
+ 946          * don't include the root cert in the chain). Therefore we deliberately
+ 947          * ignore the error return from this call. We're not actually verifying
+ 948          * the cert - we're just building as much of the chain as we can
+ 949          */
+ 950         (void)X509_verify_cert(xs_ctx);
+ 951         /* Don't leave errors in the queue */
+ 952         ERR_clear_error();
+ 953         chain = X509_STORE_CTX_get0_chain(xs_ctx);
+ 954         i = ssl_security_cert_chain(s, chain, NULL, 0);
+ 955         if (i != 1) {
+ 956 #if 0
+ 957             /* Dummy error calls so mkerr generates them */
+ 958             SSLerr(SSL_F_SSL_ADD_CERT_CHAIN, SSL_R_EE_KEY_TOO_SMALL);
+ 959             SSLerr(SSL_F_SSL_ADD_CERT_CHAIN, SSL_R_CA_KEY_TOO_SMALL);
+ 960             SSLerr(SSL_F_SSL_ADD_CERT_CHAIN, SSL_R_CA_MD_TOO_WEAK);
+ 961 #endif
+ 962             X509_STORE_CTX_free(xs_ctx);
+ 963             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_ADD_CERT_CHAIN, i);
+ 964             return 0;
+ 965         }
+ 966         chain_count = sk_X509_num(chain);
+ 967         for (i = 0; i < chain_count; i++) {
+ 968             x = sk_X509_value(chain, i);
+ 969 
+ 970             if (!ssl_add_cert_to_wpacket(s, pkt, x, i)) {
+ 971                 /* SSLfatal() already called */
+ 972                 X509_STORE_CTX_free(xs_ctx);
+ 973                 return 0;
+ 974             }
+ 975         }
+ 976         X509_STORE_CTX_free(xs_ctx);
+ 977     } else {
+ 978         i = ssl_security_cert_chain(s, extra_certs, x, 0);
+ 979         if (i != 1) {
+ 980             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_ADD_CERT_CHAIN, i);
+ 981             return 0;
+ 982         }
+ 983         if (!ssl_add_cert_to_wpacket(s, pkt, x, 0)) {
+ 984             /* SSLfatal() already called */
+ 985             return 0;
+ 986         }
+ 987         for (i = 0; i < sk_X509_num(extra_certs); i++) {
+ 988             x = sk_X509_value(extra_certs, i);
+ 989             if (!ssl_add_cert_to_wpacket(s, pkt, x, i + 1)) {
+ 990                 /* SSLfatal() already called */
+ 991                 return 0;
+ 992             }
+ 993         }
+ 994     }
+ 995     return 1;
+ 996 }
+```
 
 
 

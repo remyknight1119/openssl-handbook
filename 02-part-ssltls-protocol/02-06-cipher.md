@@ -738,11 +738,306 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 ### 3.1 ClientHello
 
+ClientHello中会列出所有支持的Cipher, 这个功能是由tls\_construct\_client\_hello\(\)实现的：
 
+```text
+1104 int tls_construct_client_hello(SSL *s, WPACKET *pkt)
+1105 {
+1106     unsigned char *p;
+...
+1253     if (!ssl_cipher_list_to_bytes(s, SSL_get_ciphers(s), pkt)) {
+1254         /* SSLfatal() already called */
+1255         return 0;
+1256     }
+...
+```
+
+ssl\_cipher\_list\_to\_bytes\(\)将在ssl创建时就已经初始化好的cipher list转换成字符串：
+
+```text
+3729 int ssl_cipher_list_to_bytes(SSL *s, STACK_OF(SSL_CIPHER) *sk, WPACKET *pkt)
+3730 {
+3731     int i;
+3732     size_t totlen = 0, len, maxlen, maxverok = 0;
+3733     int empty_reneg_info_scsv = !s->renegotiate;
+3734 
+3735     /* Set disabled masks for this session */
+3736     if (!ssl_set_client_disabled(s)) {
+3737         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_CIPHER_LIST_TO_BYTES,
+3738                  SSL_R_NO_PROTOCOLS_AVAILABLE);
+3739         return 0;
+3740     }
+3741 
+3742     if (sk == NULL) {
+3743         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_CIPHER_LIST_TO_BYTES,
+3744                  ERR_R_INTERNAL_ERROR);
+3745         return 0;
+3746     }
+3747 
+3748 #ifdef OPENSSL_MAX_TLS1_2_CIPHER_LENGTH
+3749 # if OPENSSL_MAX_TLS1_2_CIPHER_LENGTH < 6
+3750 #  error Max cipher length too short
+3751 # endif
+3752     /*
+3753      * Some servers hang if client hello > 256 bytes as hack workaround
+3754      * chop number of supported ciphers to keep it well below this if we
+3755      * use TLS v1.2
+3756      */
+3757     if (TLS1_get_version(s) >= TLS1_2_VERSION)
+3758         maxlen = OPENSSL_MAX_TLS1_2_CIPHER_LENGTH & ~1;
+3759     else
+3760 #endif
+3761         /* Maximum length that can be stored in 2 bytes. Length must be even */
+3762         maxlen = 0xfffe;
+3763 
+3764     if (empty_reneg_info_scsv)
+3765         maxlen -= 2;
+3766     if (s->mode & SSL_MODE_SEND_FALLBACK_SCSV)
+3767         maxlen -= 2;
+3768 
+3769     for (i = 0; i < sk_SSL_CIPHER_num(sk) && totlen < maxlen; i++) {
+3770         const SSL_CIPHER *c;
+3771 
+3772         c = sk_SSL_CIPHER_value(sk, i);
+3773         /* Skip disabled ciphers */
+3774         if (ssl_cipher_disabled(s, c, SSL_SECOP_CIPHER_SUPPORTED, 0))
+3775             continue;
+3776 
+3777         if (!s->method->put_cipher_by_char(c, pkt, &len)) {
+3778             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_CIPHER_LIST_TO_BYTES,
+3779                      ERR_R_INTERNAL_ERROR);
+3780             return 0;
+3781         }
+3782 
+3783         /* Sanity check that the maximum version we offer has ciphers enabled */
+3784         if (!maxverok) {
+3785             if (SSL_IS_DTLS(s)) {
+3786                 if (DTLS_VERSION_GE(c->max_dtls, s->s3->tmp.max_ver)
+3787                         && DTLS_VERSION_LE(c->min_dtls, s->s3->tmp.max_ver))
+3788                     maxverok = 1;
+3789             } else {
+3790                 if (c->max_tls >= s->s3->tmp.max_ver
+3791                         && c->min_tls <= s->s3->tmp.max_ver)
+3792                     maxverok = 1;
+3793             }
+3794         }
+3795 
+3796         totlen += len;
+3797     }
+3798 
+3799     if (totlen == 0 || !maxverok) {
+3800         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_SSL_CIPHER_LIST_TO_BYTES,
+3801                  SSL_R_NO_CIPHERS_AVAILABLE);
+3802 
+3803         if (!maxverok)
+3804             ERR_add_error_data(1, "No ciphers enabled for max supported "
+3805                                   "SSL/TLS version");
+3806 
+3807         return 0;
+3808     }
+3809 
+3810     if (totlen != 0) {
+3811         if (empty_reneg_info_scsv) {
+3812             static SSL_CIPHER scsv = {
+3813                 0, NULL, NULL, SSL3_CK_SCSV, 0, 0, 0, 0, 0, 0, 0, 0, 0
+3814             };
+3815             if (!s->method->put_cipher_by_char(&scsv, pkt, &len)) {
+3816                 SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+3817                          SSL_F_SSL_CIPHER_LIST_TO_BYTES, ERR_R_INTERNAL_ERROR);
+3818                 return 0;
+3819             }
+3820         }
+3821         if (s->mode & SSL_MODE_SEND_FALLBACK_SCSV) {
+3822             static SSL_CIPHER scsv = {
+3823                 0, NULL, NULL, SSL3_CK_FALLBACK_SCSV, 0, 0, 0, 0, 0, 0, 0, 0, 0
+3824             };
+3825             if (!s->method->put_cipher_by_char(&scsv, pkt, &len)) {
+3826                 SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+3827                          SSL_F_SSL_CIPHER_LIST_TO_BYTES, ERR_R_INTERNAL_ERROR);
+3828                 return 0;
+3829             }
+3830         }
+3831     }
+3832 
+3833     return 1;
+3834 }
+```
+
+3769-3681: 遍历所有cipher，将其转换成字符串后输出到ClientHello消息体中;
+
+3784-3807: 如果没有一个cipher满足版本要求，则返回错误;
+
+3811-3828: 添加特殊cipher.
+
+ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个与版本有关的限制是至少有一个cipher是版本范围\(min-max\)所支持的。
 
 ### 3.2 Server process ClientHello
 
-### 
+```text
+1364 MSG_PROCESS_RETURN tls_process_client_hello(SSL *s, PACKET *pkt)                                                                                                                                              
+1365 {
+1366     /* |cookie| will only be initialized for DTLS. */ 
+1367     PACKET session_id, compression, extensions, cookie;
+1368     static const unsigned char null_compression = 0;
+1369     CLIENTHELLO_MSG *clienthello = NULL;            
+...
+1539         if (!PACKET_get_length_prefixed_2(pkt, &clienthello->ciphersuites)) {
+1540             SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_F_TLS_PROCESS_CLIENT_HELLO,
+1541                      SSL_R_LENGTH_MISMATCH);
+1542             goto err;
+1543         }
+1544 
+...
+1580     s->clienthello = clienthello;
+1581 
+1582     return MSG_PROCESS_CONTINUE_PROCESSING;
+1583 
+1584  err:
+1585     if (clienthello != NULL)
+1586         OPENSSL_free(clienthello->pre_proc_exts);
+1587     OPENSSL_free(clienthello);
+1588 
+1589     return MSG_PROCESS_ERROR;
+1590 }
+```
+
+这里只是把cipher suites的信息放到clienthello-&gt;ciphersuites里面，通过tls\_post\_process\_client\_hello\(\)调用tls\_early\_post\_process\_client\_hello\(\)来解析：
+
+```text
+1592 static int tls_early_post_process_client_hello(SSL *s)
+1593 {
+1594     unsigned int j;      
+1595     int i, al = SSL_AD_INTERNAL_ERROR; 
+1596     int protverr;
+1597     size_t loop;
+1598     unsigned long id;
+1599 #ifndef OPENSSL_NO_COMP
+1600     SSL_COMP *comp = NULL;
+1601 #endif
+1602     const SSL_CIPHER *c; 
+1603     STACK_OF(SSL_CIPHER) *ciphers = NULL;
+1604     STACK_OF(SSL_CIPHER) *scsvs = NULL;
+1605     CLIENTHELLO_MSG *clienthello = s->clienthello;
+...
+1715     if (!ssl_cache_cipherlist(s, &clienthello->ciphersuites,
+1716                               clienthello->isv2) ||
+1717         !bytes_to_cipher_list(s, &clienthello->ciphersuites, &ciphers, &scsvs,
+1718                               clienthello->isv2, 1)) {
+1719         /* SSLfatal() already called */
+1720         goto err;
+1721     }
+...
+1754     /* For TLSv1.3 we must select the ciphersuite *before* session resumption */
+1755     if (SSL_IS_TLS13(s)) {
+1756         const SSL_CIPHER *cipher =
+1757             ssl3_choose_cipher(s, ciphers, SSL_get_ciphers(s));
+1758 
+1759         if (cipher == NULL) {
+1760             SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE,
+1761                      SSL_F_TLS_EARLY_POST_PROCESS_CLIENT_HELLO,
+1762                      SSL_R_NO_SHARED_CIPHER);
+1763             goto err;
+1764         }
+1765         if (s->hello_retry_request == SSL_HRR_PENDING
+1766                 && (s->s3->tmp.new_cipher == NULL
+1767                     || s->s3->tmp.new_cipher->id != cipher->id)) {
+1768             /*
+1769              * A previous HRR picked a different ciphersuite to the one we
+1770              * just selected. Something must have changed.
+1771              */
+1772             SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER,
+1773                      SSL_F_TLS_EARLY_POST_PROCESS_CLIENT_HELLO,
+1774                      SSL_R_BAD_CIPHER);
+1775             goto err;
+1776         }
+1777         s->s3->tmp.new_cipher = cipher;
+1778     }
+...
+1834     /*
+1835      * If it is a hit, check that the cipher is in the list. In TLSv1.3 we check
+1836      * ciphersuite compatibility with the session as part of resumption.
+1837      */
+1838     if (!SSL_IS_TLS13(s) && s->hit) {
+1839         j = 0;
+1840         id = s->session->cipher->id;
+1841 
+1842 #ifdef CIPHER_DEBUG
+1843         fprintf(stderr, "client sent %d ciphers\n", sk_SSL_CIPHER_num(ciphers));
+1844 #endif
+1845         for (i = 0; i < sk_SSL_CIPHER_num(ciphers); i++) {
+1846             c = sk_SSL_CIPHER_value(ciphers, i);
+1847 #ifdef CIPHER_DEBUG
+1848             fprintf(stderr, "client [%2d of %2d]:%s\n",
+1849                     i, sk_SSL_CIPHER_num(ciphers), SSL_CIPHER_get_name(c));
+1850 #endif
+1851             if (c->id == id) {
+1852                 j = 1;
+1853                 break;
+1854             }
+1855         }
+1856         if (j == 0) {
+1857             /*
+1858              * we need to have the cipher in the cipher list if we are asked
+1859              * to reuse it
+1860              */
+1861             SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER,
+1862                      SSL_F_TLS_EARLY_POST_PROCESS_CLIENT_HELLO,
+1863                      SSL_R_REQUIRED_CIPHER_MISSING);
+1864             goto err;
+1865         }
+1866     }
+...
+1922         master_key_length = sizeof(s->session->master_key);
+1923         if (s->ext.session_secret_cb(s, s->session->master_key,
+1924                                      &master_key_length, ciphers,
+1925                                      &pref_cipher,
+1926                                      s->ext.session_secret_cb_arg)
+1927                 && master_key_length > 0) {
+1928             s->session->master_key_length = master_key_length;
+1929             s->hit = 1;
+1930             s->session->ciphers = ciphers;
+1931             s->session->verify_result = X509_V_OK;
+1932 
+1933             ciphers = NULL;
+1934 
+1935             /* check if some cipher was preferred by call back */
+1936             if (pref_cipher == NULL)
+1937                 pref_cipher = ssl3_choose_cipher(s, s->session->ciphers,
+1938                                                  SSL_get_ciphers(s));
+1939             if (pref_cipher == NULL) {
+1940                 SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE,
+1941                          SSL_F_TLS_EARLY_POST_PROCESS_CLIENT_HELLO,
+1942                          SSL_R_NO_SHARED_CIPHER);
+1943                 goto err;
+1944             }
+1945 
+1946             s->session->cipher = pref_cipher;
+1947             sk_SSL_CIPHER_free(s->cipher_list);
+1948             s->cipher_list = sk_SSL_CIPHER_dup(s->session->ciphers);
+1949             sk_SSL_CIPHER_free(s->cipher_list_by_id);
+1950             s->cipher_list_by_id = sk_SSL_CIPHER_dup(s->session->ciphers);
+1951         }
+1952     }
+...
+2049     /*
+2050      * Given s->session->ciphers and SSL_get_ciphers, we must pick a cipher
+2051      */
+2052 
+2053     if (!s->hit || SSL_IS_TLS13(s)) {
+2054         sk_SSL_CIPHER_free(s->session->ciphers);
+2055         s->session->ciphers = ciphers;
+2056         if (ciphers == NULL) {
+2057             SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+2058                      SSL_F_TLS_EARLY_POST_PROCESS_CLIENT_HELLO,
+2059                      ERR_R_INTERNAL_ERROR);
+2060             goto err;
+2061         }
+2062         ciphers = NULL;
+2063     }
+...
+```
+
+
 
 ### 3.3 ServerHello
 

@@ -17,7 +17,7 @@ SSL Cipher suite是一组选定的加密设置和参数，它用于精确定义�
 
 在生成SSL\_CTX时cipher list就会被创建：
 
-```text
+```c
 2899 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
 2900 {
 2901     SSL_CTX *ret = NULL; 
@@ -48,7 +48,7 @@ SSL Cipher suite是一组选定的加密设置和参数，它用于精确定义�
 
 Cipher list的创建是由ssl\_create\_cipher\_list\(\)实现的：
 
-```text
+```c
 1402 STACK_OF(SSL_CIPHER) *ssl_create_cipher_list(const SSL_METHOD *ssl_method,  
 1403                                              STACK_OF(SSL_CIPHER) *tls13_ciphersuites,
 1404                                              STACK_OF(SSL_CIPHER) **cipher_list,
@@ -66,7 +66,7 @@ Cipher list的创建是由ssl\_create\_cipher\_list\(\)实现的：
 
 cipher\_list和cipher\_list\_by\_id都保存着函数输出的cipher list，不同的是前者是原始的，后者是排过序的。而最终的结果在输出之前，会保存在1411行的cipherstack里。而1406行的入参rule\_str，则是生成cipher list的根据。
 
-```text
+```c
 ssl_create_cipher_list:
 1436     /*
 1437      * Now we have to collect the available ciphers from the compiled
@@ -92,7 +92,7 @@ ssl_create_cipher_list:
 
 1449-1451: ssl\_cipher\_collect\_ciphers负责收集cipher的全集：
 
-```text
+```c
  641 static void ssl_cipher_collect_ciphers(const SSL_METHOD *ssl_method,  
  642                                        int num_of_ciphers,            
  643                                        uint32_t disabled_mkey,        
@@ -175,7 +175,7 @@ ssl_create_cipher_list:
 
 接下来是调整这个链表：
 
-```text
+```c
 ssl_create_cipher_list:
 1453     /* Now arrange all ciphers by preference. */
 1454 
@@ -197,7 +197,7 @@ ssl_create_cipher_list:
 
 有必要仔细看下ssl\_cipher\_apply\_rule\(\)的代码：
 
-```text
+```c
  773 static void ssl_cipher_apply_rule(uint32_t cipher_id, uint32_t alg_mkey,
  774                                   uint32_t alg_auth, uint32_t alg_enc,
  775                                   uint32_t alg_mac, int min_tls,
@@ -236,7 +236,7 @@ ssl_create_cipher_list:
 
 795-806: 设置好链表head，tail和方向，准备遍历：
 
-```text
+```c
  807     for (;;) {
  808         if (curr == last)
  809             break;
@@ -291,7 +291,7 @@ ssl_create_cipher_list:
 
 835-853: 过滤掉不相关的cipher.
 
-```text
+```c
  855 #ifdef CIPHER_DEBUG
  856         fprintf(stderr, "Action = %d\n", rule);
  857 #endif
@@ -359,7 +359,7 @@ ssl_create_cipher_list:
 
 回到ssl\_create\_cipher\_list\(\)函数，在调用了一堆ssl\_cipher\_apply\_rule\(\)函数来调整cipher list之后，
 
-```text
+```c
 1506 
 1507     /*
 1508      * Now sort by symmetric encryption strength.  The above ordering remains
@@ -404,7 +404,7 @@ ssl_create_cipher_list:
 
 1511: 根据对称加密算法的强度重新排序：
 
-```text
+```c
  909 static int ssl_cipher_strength_sort(CIPHER_ORDER **head_p,
  910                                     CIPHER_ORDER **tail_p)
  911 {
@@ -462,7 +462,7 @@ ssl_create_cipher_list:
 
 再次回到ssl\_create\_cipher\_list\(\):
 
-```text
+```c
 1516     /*
 1517      * Partially overrule strength sort to prefer TLS 1.2 ciphers/PRFs.
 1518      * TODO(openssl-team): is there an easier way to accomplish all this?
@@ -520,7 +520,7 @@ ssl_create_cipher_list:
 
 1544: 至此构建完毕了一个cipher的全集，然后暂时disable链表中所有cipher，但保持链表的顺序;
 
-```text
+```c
 1546     /*
 1547      * We also need cipher aliases for selecting based on the rule_str.
 1548      * There might be two types of entries in the rule_str: 1) names
@@ -546,7 +546,7 @@ ssl_create_cipher_list:
 
 1562-1564: 将之前链表里面的cipher加入到ca\_list，并将cipher\_aliases\[\]数组中符合条件的cipher也加入进去；为什么要把cipher\_aliases\[\]也加进去？奇怪！
 
-```text
+```c
 1566     /*
 1567      * If the rule_string begins with DEFAULT, apply the default rule
 1568      * before using the (possibly available) additional rules.
@@ -637,7 +637,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 #### 2.3.1 SSL\_CTX\_set\_ssl\_version\(\)
 
-```text
+```c
  650 /** Used to change an SSL_CTXs default SSL method type */
  651 int SSL_CTX_set_ssl_version(SSL_CTX *ctx, const SSL_METHOD *meth)
  652 {   
@@ -666,7 +666,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 #### 2.3.2 SSL\_CTX\_set\_cipher\_list\(\)和SSL\_set\_cipher\_list\(\)
 
-```text
+```c
 2531 /** specify the ciphers to be used by default by the SSL_CTX */
 2532 int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str)
 2533 {
@@ -714,7 +714,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 #### 2.3.3 SSL\_CTX\_new\(\)
 
-```text
+```c
 2899 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
 2900 {
 2901     SSL_CTX *ret = NULL;
@@ -740,7 +740,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 ClientHello中会列出所有支持的Cipher, 这个功能是由tls\_construct\_client\_hello\(\)实现的：
 
-```text
+```c
 1104 int tls_construct_client_hello(SSL *s, WPACKET *pkt)
 1105 {
 1106     unsigned char *p;
@@ -754,7 +754,7 @@ ClientHello中会列出所有支持的Cipher, 这个功能是由tls\_construct\_
 
 ssl\_cipher\_list\_to\_bytes\(\)将在ssl创建时就已经初始化好的cipher list转换成字符串：
 
-```text
+```c
 3729 int ssl_cipher_list_to_bytes(SSL *s, STACK_OF(SSL_CIPHER) *sk, WPACKET *pkt)
 3730 {
 3731     int i;
@@ -873,7 +873,9 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 
 ### 3.2 Server process ClientHello
 
-```text
+#### 3.2.1 tls\_process\_client\_hello
+
+```c
 1364 MSG_PROCESS_RETURN tls_process_client_hello(SSL *s, PACKET *pkt)                                                                                                                                              
 1365 {
 1366     /* |cookie| will only be initialized for DTLS. */ 
@@ -901,9 +903,11 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 1590 }
 ```
 
-这里只是把cipher suites的信息放到clienthello-&gt;ciphersuites里面，通过tls\_post\_process\_client\_hello\(\)调用tls\_early\_post\_process\_client\_hello\(\)来解析：
+这里只是把cipher suites的信息放到clienthello-&gt;ciphersuites里面，通过tls\_post\_process\_client\_hello\(\)调用tls\_early\_post\_process\_client\_hello\(\)来解析.
 
-```text
+#### 3.2.2 tls\_early\_post\_process\_client\_hello
+
+```c
 1592 static int tls_early_post_process_client_hello(SSL *s)
 1593 {
 1594     unsigned int j;      
@@ -987,6 +991,18 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 1865         }
 1866     }
 ...
+1910     if (!s->hit          
+1911             && s->version >= TLS1_VERSION  
+1912             && !SSL_IS_TLS13(s)            
+1913             && !SSL_IS_DTLS(s)
+1914             && s->ext.session_secret_cb) { 
+1915         const SSL_CIPHER *pref_cipher = NULL;
+1916         /*
+1917          * s->session->master_key_length is a size_t, but this is an int for
+1918          * backwards compat reasons
+1919          */
+1920         int master_key_length;
+1921 
 1922         master_key_length = sizeof(s->session->master_key);
 1923         if (s->ext.session_secret_cb(s, s->session->master_key,
 1924                                      &master_key_length, ciphers,
@@ -1037,29 +1053,144 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 ...
 ```
 
+1715-1716: 将cipher list的data copy到s-&gt;s3-&gt;tmp.ciphers\_raw中;
+
+1717-1718: 将二进制cipher list data解析完毕后将结果放入ciphers变量中;
+
+1755-1777: 如果是TLSv3，调用ssl3\_choose\_cipher\(\)在client cipher list和server cipher list中选出一个cipher，记录到s-&gt;s3-&gt;tmp.new\_cipher中;
+
+1838-1864: 如果不是TLSv1.3且处于session reuse过程中，则检查新匹配到的cipher与之前使用的是否一致;
+
+1910-1914: 如果：
+
+1\) 不是session reuse;
+
+2\) TLS 1.0, TLS 1.1, TLS 1.2;
+
+3\) 通过SSL\_set\_session\_secret\_cb\(\)设置了预共享密钥callback.
+
+1923-1950: 用经过callback认可的ciphers来选择最终的cipher.
+
+2053-2055: 如果不是session reuse或者是TLSv1.3, 将ciphers保存到s-&gt;session-&gt;ciphers中.
+
+#### 3.2.3 tls\_post\_process\_client\_hello
+
+tls\_post\_process\_client\_hello\(\)需要做后续处理:
+
+```c
+2221 WORK_STATE tls_post_process_client_hello(SSL *s, WORK_STATE wst)
+2222 {
+2223     const SSL_CIPHER *cipher;
+2224 
+2225     if (wst == WORK_MORE_A) {
+2226         int rv = tls_early_post_process_client_hello(s);
+2227         if (rv == 0) {
+2228             /* SSLfatal() was already called */
+2229             goto err;
+2230         }
+2231         if (rv < 0)
+2232             return WORK_MORE_A;
+2233         wst = WORK_MORE_B;
+2234     }
+2235     if (wst == WORK_MORE_B) {
+2236         if (!s->hit || SSL_IS_TLS13(s)) {
+...
+2259             /* In TLSv1.3 we selected the ciphersuite before resumption */
+2260             if (!SSL_IS_TLS13(s)) {
+2261                 cipher =
+2262                     ssl3_choose_cipher(s, s->session->ciphers, SSL_get_ciphers(s));
+2263 
+2264                 if (cipher == NULL) {
+2265                     SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE,
+2266                              SSL_F_TLS_POST_PROCESS_CLIENT_HELLO,
+2267                              SSL_R_NO_SHARED_CIPHER);
+2268                     goto err;
+2269                 }
+2270                 s->s3->tmp.new_cipher = cipher;
+2271             }
+2272             if (!s->hit) {
+2273                 if (!tls_choose_sigalg(s, 1)) {
+2274                     /* SSLfatal already called */
+2275                     goto err;
+2276                 }
+2277                 /* check whether we should disable session resumption */
+2278                 if (s->not_resumable_session_cb != NULL)
+2279                     s->session->not_resumable =
+2280                         s->not_resumable_session_cb(s,
+2281                             ((s->s3->tmp.new_cipher->algorithm_mkey
+2282                               & (SSL_kDHE | SSL_kECDHE)) != 0));
+2283                 if (s->session->not_resumable)
+2284                     /* do not send a session ticket */
+2285                     s->ext.ticket_expected = 0;
+2286             }
+2287         } else {
+2288             /* Session-id reuse */
+2289             s->s3->tmp.new_cipher = s->session->cipher;
+2290         }
+...
+```
+
+2260-2270: 如果不是session reuse且不是TLSv1.3，使用ssl3\_choose\_cipher\(\)选择一个cipher保存到s-&gt;s3-&gt;tmp.new\_cipher中;
+
+2272-2275: 如果不是session reuse，调用tls\_choose\_sigalg\(\)选择签名算法;
+
+2287-2289: 如果是session reuse，直接使用s-&gt;session-&gt;cipher.
+
+总结：
+
+| **成员变量** | **功能描述** |
+| :--- | :--- |
+| s-&gt;session-&gt;ciphers | client提供的cipiher list |
+| s-&gt;cipher\_list | server自己的ciphier list |
+| s-&gt;session-&gt;cipher | session reuse或使用预共享密钥时选择的cipher |
+| s-&gt;s3-&gt;tmp.new\_cipher | 确定要使用的cipher |
+
+#### 3.2.4 ssl3\_choose\_cipher
+
 
 
 ### 3.3 ServerHello
 
+在使用tls\_construct\_server\_hello\(\)构建ServerHello时SSL server将确定要使用的cipher写入消息体:
+
+```c
+2347 int tls_construct_server_hello(SSL *s, WPACKET *pkt)
+2348 {
+2349     int compm;
+2350     size_t sl, len;
+2351     int version;
+2352     unsigned char *session_id;
+2353     int usetls13 = SSL_IS_TLS13(s) || s->hello_retry_request == SSL_HRR_PENDING;
+...
+2417     if (!WPACKET_sub_memcpy_u8(pkt, session_id, sl)
+2418             || !s->method->put_cipher_by_char(s->s3->tmp.new_cipher, pkt, &len)
+2419             || !WPACKET_put_bytes_u8(pkt, compm)) {
+2420         SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_F_TLS_CONSTRUCT_SERVER_HELLO,
+2421                  ERR_R_INTERNAL_ERROR);
+2422         return 0;
+2423     }
+...
+```
+
+### 3.4 Client process ServerHello
 
 
-## 4. Server Cipher Selection
 
 
 
-## 5. Sign Cipher
+## 4. Signature Algorithm
 
 
 
-## 6. Key Exchange Cipher
+## 5. Key Exchange Algorithm
 
 
 
-## 7. Encryption/Decryption Cipher
+## 6. Encryption/Decryption Algorighm
 
 
 
-## 8. Hash Cipher
+## 7. Hash Algorithm
 
 
 

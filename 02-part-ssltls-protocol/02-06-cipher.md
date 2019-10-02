@@ -1147,9 +1147,215 @@ tls\_post\_process\_client\_hello\(\)需要做后续处理:
 
 #### 3.2.4 ssl3\_choose\_cipher
 
+```c
+4135 const SSL_CIPHER *ssl3_choose_cipher(SSL *s, STACK_OF(SSL_CIPHER) *clnt,
+4136                                      STACK_OF(SSL_CIPHER) *srvr)
+4137 {
+4138     const SSL_CIPHER *c, *ret = NULL;
+4139     STACK_OF(SSL_CIPHER) *prio, *allow;
+4140     int i, ii, ok, prefer_sha256 = 0;
+4141     unsigned long alg_k = 0, alg_a = 0, mask_k = 0, mask_a = 0;
+4142     const EVP_MD *mdsha256 = EVP_sha256();
+4143 #ifndef OPENSSL_NO_CHACHA
+4144     STACK_OF(SSL_CIPHER) *prio_chacha = NULL;
+4145 #endif
+...
+4171     /* SUITE-B takes precedence over server preference and ChaCha priortiy */
+4172     if (tls1_suiteb(s)) {
+4173         prio = srvr;
+4174         allow = clnt;
+4175     } else if (s->options & SSL_OP_CIPHER_SERVER_PREFERENCE) {
+4176         prio = srvr;
+4177         allow = clnt;
+4178 #ifndef OPENSSL_NO_CHACHA
+4179         /* If ChaCha20 is at the top of the client preference list,
+4180            and there are ChaCha20 ciphers in the server list, then
+4181            temporarily prioritize all ChaCha20 ciphers in the servers list. */
+4182         if (s->options & SSL_OP_PRIORITIZE_CHACHA && sk_SSL_CIPHER_num(clnt) > 0) {
+4183             c = sk_SSL_CIPHER_value(clnt, 0);
+4184             if (c->algorithm_enc == SSL_CHACHA20POLY1305) {
+4185                 /* ChaCha20 is client preferred, check server... */
+4186                 int num = sk_SSL_CIPHER_num(srvr);
+4187                 int found = 0;
+4188                 for (i = 0; i < num; i++) {
+4189                     c = sk_SSL_CIPHER_value(srvr, i);
+4190                     if (c->algorithm_enc == SSL_CHACHA20POLY1305) {
+4191                         found = 1;
+4192                         break;
+4193                     }
+4194                 }
+4195                 if (found) {
+4196                     prio_chacha = sk_SSL_CIPHER_new_reserve(NULL, num);
+4197                     /* if reserve fails, then there's likely a memory issue */
+4198                     if (prio_chacha != NULL) {
+4199                         /* Put all ChaCha20 at the top, starting with the one we just found */
+4200                         sk_SSL_CIPHER_push(prio_chacha, c);
+4201                         for (i++; i < num; i++) {
+4202                             c = sk_SSL_CIPHER_value(srvr, i);
+4203                             if (c->algorithm_enc == SSL_CHACHA20POLY1305)
+4204                                 sk_SSL_CIPHER_push(prio_chacha, c);
+4205                         }
+4206                         /* Pull in the rest */
+4207                         for (i = 0; i < num; i++) {
+4208                             c = sk_SSL_CIPHER_value(srvr, i);
+4209                             if (c->algorithm_enc != SSL_CHACHA20POLY1305)
+4210                                 sk_SSL_CIPHER_push(prio_chacha, c);
+4211                         }
+4212                         prio = prio_chacha;
+4213                     }
+4214                 }
+4215             }
+4216         }
+4217 # endif
+4218     } else {
+4219         prio = clnt;
+4220         allow = srvr;
+4221     }
+4222 
+4223     if (SSL_IS_TLS13(s)) {
+4224 #ifndef OPENSSL_NO_PSK
+4225         int j;
+4226 
+4227         /*
+4228          * If we allow "old" style PSK callbacks, and we have no certificate (so
+4229          * we're not going to succeed without a PSK anyway), and we're in
+4230          * TLSv1.3 then the default hash for a PSK is SHA-256 (as per the
+4231          * TLSv1.3 spec). Therefore we should prioritise ciphersuites using
+4232          * that.
+4233          */
+4234         if (s->psk_server_callback != NULL) {
+4235             for (j = 0; j < SSL_PKEY_NUM && !ssl_has_cert(s, j); j++);
+4236             if (j == SSL_PKEY_NUM) {
+4237                 /* There are no certificates */
+4238                 prefer_sha256 = 1;
+4239             }
+4240         }
+4241 #endif
+4242     } else {
+4243         tls1_set_cert_validity(s);
+4244         ssl_set_masks(s);
+4245     }
+4246 
+4247     for (i = 0; i < sk_SSL_CIPHER_num(prio); i++) {
+4248         c = sk_SSL_CIPHER_value(prio, i);
+4249 
+4250         /* Skip ciphers not supported by the protocol version */
+4251         if (!SSL_IS_DTLS(s) &&
+4252             ((s->version < c->min_tls) || (s->version > c->max_tls)))
+4253             continue;
+4254         if (SSL_IS_DTLS(s) &&
+4255             (DTLS_VERSION_LT(s->version, c->min_dtls) ||
+4256              DTLS_VERSION_GT(s->version, c->max_dtls)))
+4257             continue;
+4258 
+4259         /*
+4260          * Since TLS 1.3 ciphersuites can be used with any auth or
+4261          * key exchange scheme skip tests.
+4262          */
+4263         if (!SSL_IS_TLS13(s)) {
+4264             mask_k = s->s3->tmp.mask_k;
+4265             mask_a = s->s3->tmp.mask_a;
+4266 #ifndef OPENSSL_NO_SRP
+4267             if (s->srp_ctx.srp_Mask & SSL_kSRP) {
+4268                 mask_k |= SSL_kSRP;
+4269                 mask_a |= SSL_aSRP;
+4270             }
+4271 #endif
+4272 
+4273             alg_k = c->algorithm_mkey;
+4274             alg_a = c->algorithm_auth;
+4275 
+4276 #ifndef OPENSSL_NO_PSK
+4277             /* with PSK there must be server callback set */
+4278             if ((alg_k & SSL_PSK) && s->psk_server_callback == NULL)
+4279                 continue;
+4280 #endif                          /* OPENSSL_NO_PSK */
+4281 
+4282             ok = (alg_k & mask_k) && (alg_a & mask_a);
+4283 #ifdef CIPHER_DEBUG
+4284             fprintf(stderr, "%d:[%08lX:%08lX:%08lX:%08lX]%p:%s\n", ok, alg_k,
+4285                     alg_a, mask_k, mask_a, (void *)c, c->name);
+4286 #endif
+4287 
+4288 #ifndef OPENSSL_NO_EC
+4289             /*
+4290              * if we are considering an ECC cipher suite that uses an ephemeral
+4291              * EC key check it
+4292              */
+4293             if (alg_k & SSL_kECDHE)
+4294                 ok = ok && tls1_check_ec_tmp_key(s, c->id);
+4295 #endif                          /* OPENSSL_NO_EC */
+4296 
+4297             if (!ok)
+4298                 continue;
+4299         }
+4300         ii = sk_SSL_CIPHER_find(allow, c);
+4301         if (ii >= 0) {
+4302             /* Check security callback permits this cipher */
+4303             if (!ssl_security(s, SSL_SECOP_CIPHER_SHARED,
+4304                               c->strength_bits, 0, (void *)c))
+4305                 continue;
+4306 #if !defined(OPENSSL_NO_EC)
+4307             if ((alg_k & SSL_kECDHE) && (alg_a & SSL_aECDSA)
+4308                 && s->s3->is_probably_safari) {
+4309                 if (!ret)
+4310                     ret = sk_SSL_CIPHER_value(allow, ii);
+4311                 continue;
+4312             }
+4313 #endif
+4314             if (prefer_sha256) {
+4315                 const SSL_CIPHER *tmp = sk_SSL_CIPHER_value(allow, ii);
+4316 
+4317                 if (ssl_md(tmp->algorithm2) == mdsha256) {
+4318                     ret = tmp;
+4319                     break;
+4320                 }
+4321                 if (ret == NULL)
+4322                     ret = tmp;
+4323                 continue;
+4324             }
+4325             ret = sk_SSL_CIPHER_value(allow, ii);
+4326             break;
+4327         }
+4328     }
+4329 #ifndef OPENSSL_NO_CHACHA
+4330     sk_SSL_CIPHER_free(prio_chacha);
+4331 #endif
+4332     return ret;
+4333 }
+```
+
+4172-4174: 如果启用了SUITE-B\(这是个什么东东？以后再调查\)，设置server cipher list优先；
+
+4175-4177: 如果设置了SSL\_OP\_CIPHER\_SERVER\_PREFERENCE，设置server cipher list优先；
+
+4182-4212: 如果设置了SSL\_OP\_PRIORITIZE\_CHACHA且client的cipher数量大于0，则将server cipher list中所有的ChaCha20系列的cipher移动到cipher list最前面；
+
+4218-4220: 如果没有启用SUITE-B也没有设置SSL\_OP\_CIPHER\_SERVER\_PREFERENCE，设置client cipher list优先；
+
+4223-4238: 如果是TLSv1.3，如果设置了psk\_server\_callback且没有证书，设置默认hash为SHA256；
+
+4242-4244: 如果不是TLSv1.3，调用tls1\_set\_cert\_validity\(\)设置s-&gt;s3-&gt;tmp.valid\_flags数组，调用ssl\_set\_masks\(s\)设置s-&gt;s3-&gt;tmp.mask\_k和s-&gt;s3-&gt;tmp.mask\_a；
+
+4247-4248: 遍历所有优先的cipher list;
+
+4251-4257: 过滤掉不符合版本要求的cipher list;
+
+4263-4299: 根据 mask\_k和mask\_a过滤cipher;
+
+4300: 在allow队列中查找c，c是符合过滤条件的cipher；
+
+4301-4311: 如果找到了，根据security等条件再过滤一次；
+
+4314-4323: 如果之前设置了默认hash是SHA256，并且查找到的cipher的hash算法也是SHA256，则使用；否则过滤；
+
+4325: 将查找到的cipher返回.
+
+### 3.3 Certificate and Cipher
 
 
-### 3.3 ServerHello
+
+### 3.4 ServerHello
 
 在使用tls\_construct\_server\_hello\(\)构建ServerHello时SSL server将确定要使用的cipher写入消息体:
 
@@ -1172,7 +1378,7 @@ tls\_post\_process\_client\_hello\(\)需要做后续处理:
 ...
 ```
 
-### 3.4 Client process ServerHello
+### 3.5 Client process ServerHello
 
 
 

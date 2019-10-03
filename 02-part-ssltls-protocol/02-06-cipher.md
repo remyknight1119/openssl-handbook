@@ -1353,7 +1353,293 @@ tls\_post\_process\_client\_hello\(\)需要做后续处理:
 
 ### 3.3 Certificate and Cipher
 
+SSL server所加载的证书类型会影响cipher的选择，这个是通过tls1\_set\_cert\_validity\(\)和ssl\_set\_masks\(\)函数实现的：
 
+```c
+2363 /* Set validity of certificates in an SSL structure */
+2364 void tls1_set_cert_validity(SSL *s)
+2365 {
+2366     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_RSA);
+2367     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_RSA_PSS_SIGN);
+2368     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_DSA_SIGN);
+2369     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_ECC);
+2370     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_GOST01);
+2371     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_GOST12_256);
+2372     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_GOST12_512);
+2373     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_ED25519);
+2374     tls1_check_chain(s, NULL, NULL, NULL, SSL_PKEY_ED448);
+2375 }
+```
+
+tls1\_check\_chain\(\)函数会根据证书，ClientHello的扩展信息等设置s-&gt;s3-&gt;tmp.valid\_flags：
+
+```c
+2119 int tls1_check_chain(SSL *s, X509 *x, EVP_PKEY *pk, STACK_OF(X509) *chain,
+2120                      int idx)
+2121 {
+2122     int i;
+2123     int rv = 0;
+2124     int check_flags = 0, strict_mode;
+2125     CERT_PKEY *cpk = NULL;
+2126     CERT *c = s->cert;
+2127     uint32_t *pvalid;
+2128     unsigned int suiteb_flags = tls1_suiteb(s);
+2129     /* idx == -1 means checking server chains */
+2130     if (idx != -1) {
+2131         /* idx == -2 means checking client certificate chains */
+2132         if (idx == -2) {
+2133             cpk = c->key;
+2134             idx = (int)(cpk - c->pkeys);
+2135         } else
+2136             cpk = c->pkeys + idx;
+2137         pvalid = s->s3->tmp.valid_flags + idx;
+2138         x = cpk->x509;
+2139         pk = cpk->privatekey;
+2140         chain = cpk->chain;
+2141         strict_mode = c->cert_flags & SSL_CERT_FLAGS_CHECK_TLS_STRICT;
+2142         /* If no cert or key, forget it */
+2143         if (!x || !pk)
+2144             goto end;
+2145     } else {
+2146         size_t certidx;
+2147 
+2148         if (!x || !pk)
+2149             return 0;
+2150 
+2151         if (ssl_cert_lookup_by_pkey(pk, &certidx) == NULL)
+2152             return 0;
+2153         idx = certidx;
+2154         pvalid = s->s3->tmp.valid_flags + idx;
+2155 
+2156         if (c->cert_flags & SSL_CERT_FLAGS_CHECK_TLS_STRICT)
+2157             check_flags = CERT_PKEY_STRICT_FLAGS;
+2158         else
+2159             check_flags = CERT_PKEY_VALID_FLAGS;
+2160         strict_mode = 1;
+2161     }
+2162 
+2163     if (suiteb_flags) {
+2164         int ok;
+2165         if (check_flags)
+2166             check_flags |= CERT_PKEY_SUITEB;
+2167         ok = X509_chain_check_suiteb(NULL, x, chain, suiteb_flags);
+2168         if (ok == X509_V_OK)
+2169             rv |= CERT_PKEY_SUITEB;
+2170         else if (!check_flags)
+2171             goto end;
+2172     }
+2173 
+2174     /*
+2175      * Check all signature algorithms are consistent with signature
+2176      * algorithms extension if TLS 1.2 or later and strict mode.
+2177      */
+2178     if (TLS1_get_version(s) >= TLS1_2_VERSION && strict_mode) {
+2179         int default_nid;
+2180         int rsign = 0;
+2181         if (s->s3->tmp.peer_cert_sigalgs != NULL
+2182                 || s->s3->tmp.peer_sigalgs != NULL) {
+2183             default_nid = 0;
+2184         /* If no sigalgs extension use defaults from RFC5246 */
+2185         } else {
+2186             switch (idx) {
+2187             case SSL_PKEY_RSA:
+2188                 rsign = EVP_PKEY_RSA;
+2189                 default_nid = NID_sha1WithRSAEncryption;
+2190                 break;
+2191 
+2192             case SSL_PKEY_DSA_SIGN:
+2193                 rsign = EVP_PKEY_DSA;
+2194                 default_nid = NID_dsaWithSHA1;
+2195                 break;
+2196 
+2197             case SSL_PKEY_ECC:
+2198                 rsign = EVP_PKEY_EC;
+2199                 default_nid = NID_ecdsa_with_SHA1;
+2200                 break;
+2201 
+2202             case SSL_PKEY_GOST01:
+2203                 rsign = NID_id_GostR3410_2001;
+2204                 default_nid = NID_id_GostR3411_94_with_GostR3410_2001;
+2205                 break;
+2206 
+2207             case SSL_PKEY_GOST12_256:
+2208                 rsign = NID_id_GostR3410_2012_256;
+2209                 default_nid = NID_id_tc26_signwithdigest_gost3410_2012_256;
+2210                 break;
+2211 
+2212             case SSL_PKEY_GOST12_512:
+2213                 rsign = NID_id_GostR3410_2012_512;
+2214                 default_nid = NID_id_tc26_signwithdigest_gost3410_2012_512;
+2215                 break;
+2216 
+2217             default:
+2218                 default_nid = -1;
+2219                 break;
+2220             }
+2221         }
+2222         /*
+2223          * If peer sent no signature algorithms extension and we have set
+2224          * preferred signature algorithms check we support sha1.
+2225          */
+2226         if (default_nid > 0 && c->conf_sigalgs) {
+2227             size_t j;
+2228             const uint16_t *p = c->conf_sigalgs;
+2229             for (j = 0; j < c->conf_sigalgslen; j++, p++) {
+2230                 const SIGALG_LOOKUP *lu = tls1_lookup_sigalg(*p);
+2231 
+2232                 if (lu != NULL && lu->hash == NID_sha1 && lu->sig == rsign)
+2233                     break;
+2234             }
+2235             if (j == c->conf_sigalgslen) {
+2236                 if (check_flags)
+2237                     goto skip_sigs;
+2238                 else
+2239                     goto end;
+2240             }
+2241         }
+2242         /* Check signature algorithm of each cert in chain */
+2243         if (!tls1_check_sig_alg(c, x, default_nid)) {
+2244             if (!check_flags)
+2245                 goto end;
+2246         } else
+2247             rv |= CERT_PKEY_EE_SIGNATURE;
+2248         rv |= CERT_PKEY_CA_SIGNATURE;
+2249         for (i = 0; i < sk_X509_num(chain); i++) {
+2250             if (!tls1_check_sig_alg(c, sk_X509_value(chain, i), default_nid)) {
+2251                 if (check_flags) {
+2252                     rv &= ~CERT_PKEY_CA_SIGNATURE;
+2253                     break;
+2254                 } else
+2255                     goto end;
+2256             }
+2257         }
+2258     }
+2259     /* Else not TLS 1.2, so mark EE and CA signing algorithms OK */
+2260     else if (check_flags)
+2261         rv |= CERT_PKEY_EE_SIGNATURE | CERT_PKEY_CA_SIGNATURE;
+2262  skip_sigs:
+2263     /* Check cert parameters are consistent */
+2264     if (tls1_check_cert_param(s, x, 1))
+2265         rv |= CERT_PKEY_EE_PARAM;
+2266     else if (!check_flags)
+2267         goto end;
+2268     if (!s->server)
+2269         rv |= CERT_PKEY_CA_PARAM;
+2270     /* In strict mode check rest of chain too */
+2271     else if (strict_mode) {
+2272         rv |= CERT_PKEY_CA_PARAM;
+2273         for (i = 0; i < sk_X509_num(chain); i++) {
+2274             X509 *ca = sk_X509_value(chain, i);
+2275             if (!tls1_check_cert_param(s, ca, 0)) {
+2276                 if (check_flags) {
+2277                     rv &= ~CERT_PKEY_CA_PARAM;
+2278                     break;
+2279                 } else
+2280                     goto end;
+2281             }
+2282         }
+2283     }
+2284     if (!s->server && strict_mode) {
+2285         STACK_OF(X509_NAME) *ca_dn;
+2286         int check_type = 0;
+2287         switch (EVP_PKEY_id(pk)) {
+2288         case EVP_PKEY_RSA:
+2289             check_type = TLS_CT_RSA_SIGN;
+2290             break;
+2291         case EVP_PKEY_DSA:
+2292             check_type = TLS_CT_DSS_SIGN;
+2293             break;
+2294         case EVP_PKEY_EC:
+2295             check_type = TLS_CT_ECDSA_SIGN;
+2296             break;
+2297         }
+2298         if (check_type) {
+2299             const uint8_t *ctypes = s->s3->tmp.ctype;
+2300             size_t j;
+2301 
+2302             for (j = 0; j < s->s3->tmp.ctype_len; j++, ctypes++) {
+2303                 if (*ctypes == check_type) {
+2304                     rv |= CERT_PKEY_CERT_TYPE;
+2305                     break;
+2306                 }
+2307             }
+2308             if (!(rv & CERT_PKEY_CERT_TYPE) && !check_flags)
+2309                 goto end;
+2310         } else {
+2311             rv |= CERT_PKEY_CERT_TYPE;
+2312         }
+2313 
+2314         ca_dn = s->s3->tmp.peer_ca_names;
+2315 
+2316         if (!sk_X509_NAME_num(ca_dn))
+2317             rv |= CERT_PKEY_ISSUER_NAME;
+2318 
+2319         if (!(rv & CERT_PKEY_ISSUER_NAME)) {
+2320             if (ssl_check_ca_name(ca_dn, x))
+2321                 rv |= CERT_PKEY_ISSUER_NAME;
+2322         }
+2323         if (!(rv & CERT_PKEY_ISSUER_NAME)) {
+2324             for (i = 0; i < sk_X509_num(chain); i++) {
+2325                 X509 *xtmp = sk_X509_value(chain, i);
+2326                 if (ssl_check_ca_name(ca_dn, xtmp)) {
+2327                     rv |= CERT_PKEY_ISSUER_NAME;
+2328                     break;
+2329                 }
+2330             }
+2331         }
+2332         if (!check_flags && !(rv & CERT_PKEY_ISSUER_NAME))
+2333             goto end;
+2334     } else
+2335         rv |= CERT_PKEY_ISSUER_NAME | CERT_PKEY_CERT_TYPE;
+2336 
+2337     if (!check_flags || (rv & check_flags) == check_flags)
+2338         rv |= CERT_PKEY_VALID;
+2339 
+2340  end:
+2341 
+2342     if (TLS1_get_version(s) >= TLS1_2_VERSION)
+2343         rv |= *pvalid & (CERT_PKEY_EXPLICIT_SIGN | CERT_PKEY_SIGN);
+2344     else
+2345         rv |= CERT_PKEY_SIGN | CERT_PKEY_EXPLICIT_SIGN;
+2346 
+2347     /*
+2348      * When checking a CERT_PKEY structure all flags are irrelevant if the
+2349      * chain is invalid.
+2350      */
+2351     if (!check_flags) {
+2352         if (rv & CERT_PKEY_VALID) {
+2353             *pvalid = rv;
+2354         } else {
+2355             /* Preserve sign and explicit sign flag, clear rest */
+2356             *pvalid &= CERT_PKEY_EXPLICIT_SIGN | CERT_PKEY_SIGN;
+2357             return 0;
+2358         }
+2359     }
+2360     return rv;
+2361 }
+```
+
+2130-2144: 如果idx不是-1， 则设置一些遍历，其中最重要的是pvalid；
+
+2145-2160: 如果idx等于-1，意味着需要检查server证书链，需要通过ssl\_cert\_lookup\_by\_pkey\(\)查找pk对应ssl\_cert\_info\[\]数组成员的下标；在tls1\_set\_cert\_validity\(\)上下文中这个分支不会走到；
+
+2163-3171:
+
+2178: 如果是TLSv1.2和TLSv1.3且是严格模式；
+
+2181-2183: 如果ClientHello带有TLSEXT\_TYPE\_signature\_algorithms扩展，则设置default\_nid为0；
+
+2185-2219: 否则根据idx的类型设置rsign和default\_nid；
+
+2226-2239:
+
+2242-2247:
+
+2248: 设置CA签名算法标记在rv上;
+
+2249-2255:
+
+2260-2261: 如果不是TLSv1.2和TLSv1.3，不是严格模式且需要检查server证书链，则将EE和CA签名算法标记设置在rv上；
 
 ### 3.4 ServerHello
 

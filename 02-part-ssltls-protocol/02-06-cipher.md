@@ -1619,7 +1619,9 @@ tls1\_check\_chain\(\)函数会根据证书，ClientHello的扩展信息等设�
 2361 }
 ```
 
-2130-2144: 如果idx不是-1， 则设置一些遍历，其中最重要的是pvalid；
+2130-2141: 如果idx不是-1， 则设置一些变量，其中最重要的是pvalid；
+
+2143-2144: 如果ssl没有加载idx指定类型的证书，则退出；
 
 2145-2160: 如果idx等于-1，意味着需要检查server证书链，需要通过ssl\_cert\_lookup\_by\_pkey\(\)查找pk对应ssl\_cert\_info\[\]数组成员的下标；在tls1\_set\_cert\_validity\(\)上下文中这个分支不会走到；
 
@@ -1633,13 +1635,148 @@ tls1\_check\_chain\(\)函数会根据证书，ClientHello的扩展信息等设�
 
 2226-2239:
 
-2242-2247:
+2243-2247: 检查idx对应类型的证书中的签名算法是否与TLSEXT\_TYPE\_signature\_algorithms扩展与server自身的共享签名算法一致；如果一致则将CERT\_PKEY\_EE\_SIGNATURE设置在rv上;
 
 2248: 设置CA签名算法标记在rv上;
 
-2249-2255:
+2249-2255: 检查证书链里每个证书中的签名算法是否与TLSEXT\_TYPE\_signature\_algorithms扩展与server自身的共享签名算法一致；
 
 2260-2261: 如果不是TLSv1.2和TLSv1.3，不是严格模式且需要检查server证书链，则将EE和CA签名算法标记设置在rv上；
+
+2264-2267: 检查idx对应类型的证书的其它参数是否一致；
+
+2271-2280: 如果是严格模式，检查证书链中证书的参数；
+
+2284-2333: 如果不是server且是严格模式，设置rv;
+
+2334-2335: 否则设置CERT\_PKEY\_ISSUER\_NAME和CERT\_PKEY\_CERT\_TYPE到rv上；
+
+2337-2338: 如果没有设置check\_flags\(idx != -1\)或check\_flags的所有值都已经设置到rv上，则设置CERT\_PKEY\_VALID到rv上；
+
+2342-2345: 根据TLS的版本设置rv；
+
+2351-2359: 如果没有设置check\_flags\(idx != -1\)，设置s-&gt;s3-&gt;tmp.valid\_flags\[\]数组.
+
+ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来设置mask\_k和mask\_a：
+
+```c
+3234 void ssl_set_masks(SSL *s)
+3235 {
+3236     CERT *c = s->cert;
+3237     uint32_t *pvalid = s->s3->tmp.valid_flags;
+3238     int rsa_enc, rsa_sign, dh_tmp, dsa_sign;
+3239     unsigned long mask_k, mask_a;  
+3240 #ifndef OPENSSL_NO_EC
+3241     int have_ecc_cert, ecdsa_ok;   
+3242 #endif
+3243     if (c == NULL)
+3244         return;
+3245 
+3246 #ifndef OPENSSL_NO_DH    
+3247     dh_tmp = (c->dh_tmp != NULL || c->dh_tmp_cb != NULL || c->dh_tmp_auto);
+3248 #else
+3249     dh_tmp = 0;
+3250 #endif
+3251 
+3252     rsa_enc = pvalid[SSL_PKEY_RSA] & CERT_PKEY_VALID;
+3253     rsa_sign = pvalid[SSL_PKEY_RSA] & CERT_PKEY_VALID;
+3254     dsa_sign = pvalid[SSL_PKEY_DSA_SIGN] & CERT_PKEY_VALID;
+3255 #ifndef OPENSSL_NO_EC    
+3256     have_ecc_cert = pvalid[SSL_PKEY_ECC] & CERT_PKEY_VALID;
+3257 #endif
+3258     mask_k = 0;
+3259     mask_a = 0;
+3260 
+3261 #ifdef CIPHER_DEBUG
+3262     fprintf(stderr, "dht=%d re=%d rs=%d ds=%d\n",
+3263             dh_tmp, rsa_enc, rsa_sign, dsa_sign);
+3264 #endif
+3265 
+3266 #ifndef OPENSSL_NO_GOST  
+3267     if (ssl_has_cert(s, SSL_PKEY_GOST12_512)) {
+3268         mask_k |= SSL_kGOST;
+3269         mask_a |= SSL_aGOST12;
+3270     }
+3271     if (ssl_has_cert(s, SSL_PKEY_GOST12_256)) {
+3272         mask_k |= SSL_kGOST;
+3273         mask_a |= SSL_aGOST12;
+3274     }
+3275     if (ssl_has_cert(s, SSL_PKEY_GOST01)) {
+3276         mask_k |= SSL_kGOST;
+3277         mask_a |= SSL_aGOST01;
+3278     }
+3279 #endif
+3280 
+3281     if (rsa_enc)
+3282         mask_k |= SSL_kRSA;
+3283 
+3284     if (dh_tmp)
+3285         mask_k |= SSL_kDHE;
+3286 
+3287     /*
+3288      * If we only have an RSA-PSS certificate allow RSA authentication
+3289      * if TLS 1.2 and peer supports it.
+3290      */
+3291 
+3292     if (rsa_enc || rsa_sign || (ssl_has_cert(s, SSL_PKEY_RSA_PSS_SIGN)
+3293                 && pvalid[SSL_PKEY_RSA_PSS_SIGN] & CERT_PKEY_EXPLICIT_SIGN
+3294                 && TLS1_get_version(s) == TLS1_2_VERSION))
+3295         mask_a |= SSL_aRSA;
+3296 
+3297     if (dsa_sign) {
+3298         mask_a |= SSL_aDSS;
+3299     }
+3300 
+3301     mask_a |= SSL_aNULL;
+3302 
+3303     /*
+3304      * An ECC certificate may be usable for ECDH and/or ECDSA cipher suites
+3305      * depending on the key usage extension.
+3306      */
+3307 #ifndef OPENSSL_NO_EC
+3308     if (have_ecc_cert) {
+3309         uint32_t ex_kusage;
+3310         ex_kusage = X509_get_key_usage(c->pkeys[SSL_PKEY_ECC].x509);
+3311         ecdsa_ok = ex_kusage & X509v3_KU_DIGITAL_SIGNATURE;
+3312         if (!(pvalid[SSL_PKEY_ECC] & CERT_PKEY_SIGN))
+3313             ecdsa_ok = 0;
+3314         if (ecdsa_ok)
+3315             mask_a |= SSL_aECDSA;
+3316     }
+3317     /* Allow Ed25519 for TLS 1.2 if peer supports it */
+3318     if (!(mask_a & SSL_aECDSA) && ssl_has_cert(s, SSL_PKEY_ED25519)
+3319             && pvalid[SSL_PKEY_ED25519] & CERT_PKEY_EXPLICIT_SIGN
+3320             && TLS1_get_version(s) == TLS1_2_VERSION)
+3321             mask_a |= SSL_aECDSA;
+3322 
+3323     /* Allow Ed448 for TLS 1.2 if peer supports it */
+3324     if (!(mask_a & SSL_aECDSA) && ssl_has_cert(s, SSL_PKEY_ED448)
+3325             && pvalid[SSL_PKEY_ED448] & CERT_PKEY_EXPLICIT_SIGN
+3326             && TLS1_get_version(s) == TLS1_2_VERSION)
+3327             mask_a |= SSL_aECDSA;
+3328 #endif
+3329 
+3330 #ifndef OPENSSL_NO_EC
+3331     mask_k |= SSL_kECDHE;
+3332 #endif
+3333 
+3334 #ifndef OPENSSL_NO_PSK
+3335     mask_k |= SSL_kPSK;
+3336     mask_a |= SSL_aPSK;
+3337     if (mask_k & SSL_kRSA)
+3338         mask_k |= SSL_kRSAPSK;
+3339     if (mask_k & SSL_kDHE)
+3340         mask_k |= SSL_kDHEPSK;
+3341     if (mask_k & SSL_kECDHE)
+3342         mask_k |= SSL_kECDHEPSK;
+3343 #endif
+3344 
+3345     s->s3->tmp.mask_k = mask_k;
+3346     s->s3->tmp.mask_a = mask_a;
+3347 }
+```
+
+
 
 ### 3.4 ServerHello
 

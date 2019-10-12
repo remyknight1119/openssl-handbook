@@ -1823,7 +1823,109 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 
 ### 3.5 Client process ServerHello
 
+这里重点关注SSL client对cipher的处理:
 
+```c
+1405 MSG_PROCESS_RETURN tls_process_server_hello(SSL *s, PACKET *pkt)
+1406 {
+1407     PACKET session_id, extpkt;
+1408     size_t session_id_len;
+1409     const unsigned char *cipherchars;
+...
+1459     if (!PACKET_get_bytes(pkt, &cipherchars, TLS_CIPHER_LEN)) {
+1460         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_F_TLS_PROCESS_SERVER_HELLO,
+1461                  SSL_R_LENGTH_MISMATCH);
+1462         goto err;
+1463     }
+...
+1653     if (!set_client_ciphersuite(s, cipherchars)) {
+1654         /* SSLfatal() already called */
+1655         goto err;
+1656     }
+1657 
+...
+```
+
+1459-1462: 将ClientHello中的cipher解析到cipherchars中;
+
+1653-1655: 根据cipherchars设置client的ciphersite, 这是核心处理函数。
+
+```c
+1330 static int set_client_ciphersuite(SSL *s, const unsigned char *cipherchars)
+1331 {
+1332     STACK_OF(SSL_CIPHER) *sk;
+1333     const SSL_CIPHER *c;
+1334     int i;
+1335 
+1336     c = ssl_get_cipher_by_char(s, cipherchars, 0);
+1337     if (c == NULL) {
+1338         /* unknown cipher */
+1339         SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_F_SET_CLIENT_CIPHERSUITE,
+1340                  SSL_R_UNKNOWN_CIPHER_RETURNED);
+1341         return 0;
+1342     }
+1343     /*
+1344      * If it is a disabled cipher we either didn't send it in client hello,
+1345      * or it's not allowed for the selected protocol. So we return an error.
+1346      */
+1347     if (ssl_cipher_disabled(s, c, SSL_SECOP_CIPHER_CHECK, 1)) {
+1348         SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_F_SET_CLIENT_CIPHERSUITE,
+1349                  SSL_R_WRONG_CIPHER_RETURNED);
+1350         return 0;
+1351     }
+1352 
+1353     sk = ssl_get_ciphers_by_id(s);
+1354     i = sk_SSL_CIPHER_find(sk, c);
+1355     if (i < 0) {
+1356         /* we did not say we would use this cipher */
+1357         SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_F_SET_CLIENT_CIPHERSUITE,
+1358                  SSL_R_WRONG_CIPHER_RETURNED);
+1359         return 0;
+1360     }
+1361 
+1362     if (SSL_IS_TLS13(s) && s->s3->tmp.new_cipher != NULL
+1363             && s->s3->tmp.new_cipher->id != c->id) {
+1364         /* ServerHello selected a different ciphersuite to that in the HRR */
+1365         SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_F_SET_CLIENT_CIPHERSUITE,
+1366                  SSL_R_WRONG_CIPHER_RETURNED);
+1367         return 0;
+1368     }
+1369 
+1370     /*
+1371      * Depending on the session caching (internal/external), the cipher
+1372      * and/or cipher_id values may not be set. Make sure that cipher_id is
+1373      * set and use it for comparison.
+1374      */
+1375     if (s->session->cipher != NULL)
+1376         s->session->cipher_id = s->session->cipher->id;
+1377     if (s->hit && (s->session->cipher_id != c->id)) {
+1378         if (SSL_IS_TLS13(s)) {
+1379             /*
+1380              * In TLSv1.3 it is valid for the server to select a different
+1381              * ciphersuite as long as the hash is the same.
+1382              */
+1383             if (ssl_md(c->algorithm2)
+1384                     != ssl_md(s->session->cipher->algorithm2)) {
+1385                 SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER,
+1386                          SSL_F_SET_CLIENT_CIPHERSUITE,
+1387                          SSL_R_CIPHERSUITE_DIGEST_HAS_CHANGED);
+1388                 return 0;
+1389             }
+1390         } else {
+1391             /*
+1392              * Prior to TLSv1.3 resuming a session always meant using the same
+1393              * ciphersuite.
+1394              */
+1395             SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_F_SET_CLIENT_CIPHERSUITE,
+1396                      SSL_R_OLD_SESSION_CIPHER_NOT_RETURNED);
+1397             return 0;
+1398         }
+1399     }
+1400     s->s3->tmp.new_cipher = c;
+1401 
+1402     return 1;
+1403 }
+```
 
 
 

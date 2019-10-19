@@ -1927,21 +1927,62 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 1403 }
 ```
 
+1336: 将字符串转换为cipher结构体指针;
+
+1347-1350: 如果是disable的cipher, 返回错误;
+
+1353-1354: 在本地cipher list中查找是否有与server的cipher匹配的cipher;
+
+1362-1367: 如果是TLSv3且当前cipher与HelloRetryRequest中的不一样，则返回错误;
+
+1377: 如果处于session reuse中且上次session的cipher与本次不同;
+
+1378-1388: 如果是TLSv3，允许使用不同的cipher，只要hash算法不变就行;
+
+1390-1397: 如果不是TLv3，cipher就必须保持一致;
+
+1400: 保存最终协商完毕的cipher到s-&gt;s3-&gt;tmp.new\_cipher.
+
+## 4. Cipher process for TLSv1.2
+
+ 在TLSv1.2中，如果server选择的cipher是ECDHE-RSA-AES256-SHA，我们来看看OpenSSL是如何设置算法类型的。
+
+### 4.1 Signature Algorithm
 
 
-## 4. Signature Algorithm
+
+### 4.2 Key Exchange Algorithm
 
 
 
-## 5. Key Exchange Algorithm
+### 4.3 Encryption/Decryption Algorighm
 
 
 
-## 6. Encryption/Decryption Algorighm
+### 4.4 Hash Algorithm
 
 
 
-## 7. Hash Algorithm
+## 5. Cipher process for TLSv1.3
+
+与TLSv1.2不同，TLSv1.3的签名和密钥生成算法的选择是通过Signature Hash Algorithms Extension和  
+Supported Groups Extension完成的，cipher字段只是负责选择对称加密算法和密码模式。
+
+### 5.1 Signature Algorithm
+
+
+
+### 5.2 Key Exchange Algorithm
+
+
+
+### 5.3 Encryption/Decryption Algorighm
+
+
+
+### 5.4 Hash Algorithm
+
+### 
 
 
 

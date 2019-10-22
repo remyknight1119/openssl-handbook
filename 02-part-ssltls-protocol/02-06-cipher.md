@@ -169,7 +169,7 @@ ssl_create_cipher_list:
 
 666-672: 过滤掉无效的和被屏蔽掉的所有cipher；
 
-680-684: 将所有有效的cipher装入co\_list数组；
+680-684: 将所有有效的cipher装入co\_list数组；active默认设置为0，根据API的设置在ssl\_cipher\_apply\_rule\(\)函数中设置为1，只有active为1的cipher才能被使用；
 
 690-707: 设置co\_list链表，初始化head和tail。
 
@@ -347,11 +347,11 @@ ssl_create_cipher_list:
  907 }
 ```
 
-860-866: 如果curr是未激活且rule == CIPHER\_ADD，就将其移动到队尾；
+860-866: 如果curr是未激活且rule == CIPHER\_ADD，就将其激活并移动到队尾；
 
 868-872: 如果curr是激活的且rule == CIPHER\_ORD，就将其移动到队尾；
 
-873-883: 如果curr是未激活且rule == CIPHER\_DEL，就将其移动到队头；
+873-883: 如果curr是激活的且rule == CIPHER\_DEL，就取消激活并将其移动到队头；
 
 884-886: 如果curr是激活的且rule == CIPHER\_BUMP，就将其移动到队头；
 
@@ -1947,11 +1947,36 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 
  在TLSv1.2中，如果server选择的cipher是ECDHE-RSA-AES256-SHA，我们来看看OpenSSL是如何设置算法类型的。
 
-### 4.1 Signature Algorithm
+### 4.1 ssl\_create\_cipher\_list\(\)
 
+在ssl\_create\_cipher\_list\(\)函数中会调用ssl\_cipher\_process\_rulestr\(\)函数处理cipher string，ECDHE-RSA-AES256-SHA所对应的ssl3\_ciphers\[\]数组中的cipher是：
 
+```text
+1062     {
+1063      1,                  
+1064      TLS1_TXT_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+1065      TLS1_RFC_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+1066      TLS1_CK_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+1067      SSL_kECDHE,         
+1068      SSL_aRSA,
+1069      SSL_AES256,         
+1070      SSL_SHA1,
+1071      TLS1_VERSION, TLS1_2_VERSION,  
+1072      DTLS1_BAD_VER, DTLS1_2_VERSION,
+1073      SSL_HIGH | SSL_FIPS,
+1074      SSL_HANDSHAKE_MAC_DEFAULT | TLS1_PRF,
+1075      256,
+1076      256,
+1077      },
+```
 
-### 4.2 Key Exchange Algorithm
+只有这个cipher会被加入到ctx-&gt;cipher\_list或s-&gt;cipher\_list中。
+
+### 4.2 Choose cipher
+
+在ssl3\_choose\_cipher\(\)中，函数会调用tls1\_set\_cert\_validity\(\)和ssl\_set\_masks\(\)来根据证书的信息设置签名算法和密钥生成算法的掩码，然后对比ctx-&gt;cipher\_list或s-&gt;cipher\_list中的相应掩码，一致的话则被选择中, 返回。
+
+### 4.2 Certificate signature algorithm
 
 
 

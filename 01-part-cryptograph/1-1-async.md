@@ -18,7 +18,7 @@ async\_ctx: 全局唯一，currjob指向一个ASYNC\_JOB；dispatcher用来保�
 
 开启Async mode可以使用：SSL\_CTX\_set\_mode\(ctx, SSL\_MODE\_ASYNC\)或SSL\_set\_mode\(ssl, SSL\_MODE\_ASYNC\)。在user调用SSL\_do\_handshake\(\)（SSL\_read\(\)/SSL\_write\(\)类似）时，会调用到ssl\_start\_async\_job\(\)：
 
-```text
+```
 3578 int SSL_do_handshake(SSL *s)
 3579 {  
 3580     int ret = 1;
@@ -51,7 +51,7 @@ ASYNC\_get\_current\_job\(\)就是返回全局的async\_ctx-&gt;currjob，如果
 
 ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调函数是ssl\_do\_handshake\_intern，其实就是s-&gt;handshake\_func的简单包裹。
 
-```text
+```
 168 int ASYNC_start_job(ASYNC_JOB **job, ASYNC_WAIT_CTX *wctx, int *ret,
 169                     int (*func)(void *), void *args, size_t size)
 170 {
@@ -143,7 +143,7 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 
 第一次调用时ctx-&gt;currjob为NULL，会调用async\_get\_pool\_job\(\)申请一个job，在242-243行调用async\_fibre\_swapcontext\(\)时会触发async\_start\_func\(\)函数：
 
-```text
+```
 144 void async_start_func(void)
 145 {
 146     ASYNC_JOB *job;       
@@ -172,7 +172,7 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 
 在调用到密码算法相关函数（如：RSA 加密/解密）时，这个操作需要提交硬件加速卡来执行，提交请求完毕后需要等待硬件返回结果，这时需要调用ASYNC\_pause\_job\(\)函数来结束本次SSL\_do\_handshake\(\)的调用：
 
-```text
+```
 255 int ASYNC_pause_job(void)
 256 {
 257     ASYNC_JOB *job;

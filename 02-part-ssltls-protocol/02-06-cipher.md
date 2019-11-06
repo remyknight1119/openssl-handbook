@@ -17,7 +17,7 @@ SSL Cipher suite是一组选定的加密设置和参数，它用于精确定义�
 
 在生成SSL\_CTX时cipher list就会被创建：
 
-```c
+```
 2899 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
 2900 {
 2901     SSL_CTX *ret = NULL; 
@@ -48,7 +48,7 @@ SSL Cipher suite是一组选定的加密设置和参数，它用于精确定义�
 
 Cipher list的创建是由ssl\_create\_cipher\_list\(\)实现的：
 
-```c
+```
 1402 STACK_OF(SSL_CIPHER) *ssl_create_cipher_list(const SSL_METHOD *ssl_method,  
 1403                                              STACK_OF(SSL_CIPHER) *tls13_ciphersuites,
 1404                                              STACK_OF(SSL_CIPHER) **cipher_list,
@@ -66,7 +66,7 @@ Cipher list的创建是由ssl\_create\_cipher\_list\(\)实现的：
 
 cipher\_list和cipher\_list\_by\_id都保存着函数输出的cipher list，不同的是前者是原始的，后者是排过序的。而最终的结果在输出之前，会保存在1411行的cipherstack里。而1406行的入参rule\_str，则是生成cipher list的根据。
 
-```c
+```
 ssl_create_cipher_list:
 1436     /*
 1437      * Now we have to collect the available ciphers from the compiled
@@ -92,7 +92,7 @@ ssl_create_cipher_list:
 
 1449-1451: ssl\_cipher\_collect\_ciphers负责收集cipher的全集：
 
-```c
+```
  641 static void ssl_cipher_collect_ciphers(const SSL_METHOD *ssl_method,  
  642                                        int num_of_ciphers,            
  643                                        uint32_t disabled_mkey,        
@@ -175,7 +175,7 @@ ssl_create_cipher_list:
 
 接下来是调整这个链表：
 
-```c
+```
 ssl_create_cipher_list:
 1453     /* Now arrange all ciphers by preference. */
 1454 
@@ -197,7 +197,7 @@ ssl_create_cipher_list:
 
 有必要仔细看下ssl\_cipher\_apply\_rule\(\)的代码：
 
-```c
+```
  773 static void ssl_cipher_apply_rule(uint32_t cipher_id, uint32_t alg_mkey,
  774                                   uint32_t alg_auth, uint32_t alg_enc,
  775                                   uint32_t alg_mac, int min_tls,
@@ -236,7 +236,7 @@ ssl_create_cipher_list:
 
 795-806: 设置好链表head，tail和方向，准备遍历：
 
-```c
+```
  807     for (;;) {
  808         if (curr == last)
  809             break;
@@ -291,7 +291,7 @@ ssl_create_cipher_list:
 
 835-853: 过滤掉不相关的cipher.
 
-```c
+```
  855 #ifdef CIPHER_DEBUG
  856         fprintf(stderr, "Action = %d\n", rule);
  857 #endif
@@ -359,7 +359,7 @@ ssl_create_cipher_list:
 
 回到ssl\_create\_cipher\_list\(\)函数，在调用了一堆ssl\_cipher\_apply\_rule\(\)函数来调整cipher list之后，
 
-```c
+```
 1506 
 1507     /*
 1508      * Now sort by symmetric encryption strength.  The above ordering remains
@@ -404,7 +404,7 @@ ssl_create_cipher_list:
 
 1511: 根据对称加密算法的强度重新排序：
 
-```c
+```
  909 static int ssl_cipher_strength_sort(CIPHER_ORDER **head_p,
  910                                     CIPHER_ORDER **tail_p)
  911 {
@@ -462,7 +462,7 @@ ssl_create_cipher_list:
 
 再次回到ssl\_create\_cipher\_list\(\):
 
-```c
+```
 1516     /*
 1517      * Partially overrule strength sort to prefer TLS 1.2 ciphers/PRFs.
 1518      * TODO(openssl-team): is there an easier way to accomplish all this?
@@ -520,7 +520,7 @@ ssl_create_cipher_list:
 
 1544: 至此构建完毕了一个cipher的全集，然后暂时disable链表中所有cipher，但保持链表的顺序;
 
-```c
+```
 1546     /*
 1547      * We also need cipher aliases for selecting based on the rule_str.
 1548      * There might be two types of entries in the rule_str: 1) names
@@ -546,7 +546,7 @@ ssl_create_cipher_list:
 
 1562-1564: 将之前链表里面的cipher加入到ca\_list，并将cipher\_aliases\[\]数组中符合条件的cipher也加入进去；为什么要把cipher\_aliases\[\]也加进去？奇怪！
 
-```c
+```
 1566     /*
 1567      * If the rule_string begins with DEFAULT, apply the default rule
 1568      * before using the (possibly available) additional rules.
@@ -637,7 +637,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 #### 2.3.1 SSL\_CTX\_set\_ssl\_version\(\)
 
-```c
+```
  650 /** Used to change an SSL_CTXs default SSL method type */
  651 int SSL_CTX_set_ssl_version(SSL_CTX *ctx, const SSL_METHOD *meth)
  652 {   
@@ -666,7 +666,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 #### 2.3.2 SSL\_CTX\_set\_cipher\_list\(\)和SSL\_set\_cipher\_list\(\)
 
-```c
+```
 2531 /** specify the ciphers to be used by default by the SSL_CTX */
 2532 int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str)
 2533 {
@@ -714,7 +714,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 #### 2.3.3 SSL\_CTX\_new\(\)
 
-```c
+```
 2899 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
 2900 {
 2901     SSL_CTX *ret = NULL;
@@ -740,7 +740,7 @@ ssl\_create\_cipher\_list\(\)共有4处调用:
 
 ClientHello中会列出所有支持的Cipher, 这个功能是由tls\_construct\_client\_hello\(\)实现的：
 
-```c
+```
 1104 int tls_construct_client_hello(SSL *s, WPACKET *pkt)
 1105 {
 1106     unsigned char *p;
@@ -754,7 +754,7 @@ ClientHello中会列出所有支持的Cipher, 这个功能是由tls\_construct\_
 
 ssl\_cipher\_list\_to\_bytes\(\)将在ssl创建时就已经初始化好的cipher list转换成字符串：
 
-```c
+```
 3729 int ssl_cipher_list_to_bytes(SSL *s, STACK_OF(SSL_CIPHER) *sk, WPACKET *pkt)
 3730 {
 3731     int i;
@@ -875,7 +875,7 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 
 #### 3.2.1 tls\_process\_client\_hello
 
-```c
+```
 1364 MSG_PROCESS_RETURN tls_process_client_hello(SSL *s, PACKET *pkt)                                                                                                                                              
 1365 {
 1366     /* |cookie| will only be initialized for DTLS. */ 
@@ -907,7 +907,7 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 
 #### 3.2.2 tls\_early\_post\_process\_client\_hello
 
-```c
+```
 1592 static int tls_early_post_process_client_hello(SSL *s)
 1593 {
 1594     unsigned int j;      
@@ -1077,7 +1077,7 @@ ClientHello中会包含所有的cipher，并不受版本的限制；唯一一个
 
 tls\_post\_process\_client\_hello\(\)需要做后续处理:
 
-```c
+```
 2221 WORK_STATE tls_post_process_client_hello(SSL *s, WORK_STATE wst)
 2222 {
 2223     const SSL_CIPHER *cipher;
@@ -1147,7 +1147,7 @@ tls\_post\_process\_client\_hello\(\)需要做后续处理:
 
 #### 3.2.4 ssl3\_choose\_cipher
 
-```c
+```
 4135 const SSL_CIPHER *ssl3_choose_cipher(SSL *s, STACK_OF(SSL_CIPHER) *clnt,
 4136                                      STACK_OF(SSL_CIPHER) *srvr)
 4137 {
@@ -1355,7 +1355,7 @@ tls\_post\_process\_client\_hello\(\)需要做后续处理:
 
 SSL server所加载的证书类型会影响cipher的选择，这个是通过tls1\_set\_cert\_validity\(\)和ssl\_set\_masks\(\)函数实现的：
 
-```c
+```
 2363 /* Set validity of certificates in an SSL structure */
 2364 void tls1_set_cert_validity(SSL *s)
 2365 {
@@ -1373,7 +1373,7 @@ SSL server所加载的证书类型会影响cipher的选择，这个是通过tls1
 
 tls1\_check\_chain\(\)函数会根据证书，ClientHello的扩展信息等设置s-&gt;s3-&gt;tmp.valid\_flags：
 
-```c
+```
 2119 int tls1_check_chain(SSL *s, X509 *x, EVP_PKEY *pk, STACK_OF(X509) *chain,
 2120                      int idx)
 2121 {
@@ -1659,7 +1659,7 @@ tls1\_check\_chain\(\)函数会根据证书，ClientHello的扩展信息等设�
 
 ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来设置mask\_k和mask\_a：
 
-```c
+```
 3234 void ssl_set_masks(SSL *s)
 3235 {
 3236     CERT *c = s->cert;
@@ -1802,7 +1802,7 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 
 在使用tls\_construct\_server\_hello\(\)构建ServerHello时SSL server将确定要使用的cipher写入消息体:
 
-```c
+```
 2347 int tls_construct_server_hello(SSL *s, WPACKET *pkt)
 2348 {
 2349     int compm;
@@ -1825,7 +1825,7 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 
 这里重点关注SSL client对cipher的处理:
 
-```c
+```
 1405 MSG_PROCESS_RETURN tls_process_server_hello(SSL *s, PACKET *pkt)
 1406 {
 1407     PACKET session_id, extpkt;
@@ -1850,7 +1850,7 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 
 1653-1655: 根据cipherchars设置client的ciphersite, 这是核心处理函数。
 
-```c
+```
 1330 static int set_client_ciphersuite(SSL *s, const unsigned char *cipherchars)
 1331 {
 1332     STACK_OF(SSL_CIPHER) *sk;
@@ -1951,7 +1951,7 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 
 在ssl\_create\_cipher\_list\(\)函数中会调用ssl\_cipher\_process\_rulestr\(\)函数处理cipher string，ECDHE-RSA-AES256-SHA所对应的ssl3\_ciphers\[\]数组中的cipher是：
 
-```text
+```
 1062     {
 1063      1,                  
 1064      TLS1_TXT_ECDHE_RSA_WITH_AES_256_CBC_SHA,
@@ -1993,19 +1993,58 @@ ssl\_set\_masks\(\)函数根据s-&gt;s3-&gt;tmp.valid\_flags\[\]数组的值来�
 与TLSv1.2不同，TLSv1.3的签名和密钥生成算法的选择是通过Signature Hash Algorithms Extension和  
 Supported Groups Extension完成的，cipher字段只是负责选择对称加密算法和密码模式。
 
-### 5.1 Signature Algorithm
+### 5.1 Cipher list
+
+在创建CTX的时候会设置默认cipher list:
+
+```
+2908 SSL_CTX *SSL_CTX_new(const SSL_METHOD *meth)
+2909 {
+2910     SSL_CTX *ret = NULL; 
+...
+2960     if (!SSL_CTX_set_ciphersuites(ret, TLS_DEFAULT_CIPHERSUITES))
+2961         goto err;
+...
+```
+
+TLS\_DEFAULT\_CIPHERSUITES的定义如下：
+
+```
+ 176 #  define TLS_DEFAULT_CIPHERSUITES "TLS_AES_256_GCM_SHA384:" \
+ 177                                    "TLS_CHACHA20_POLY1305_SHA256:" \
+ 178                                    "TLS_AES_128_GCM_SHA256"
+```
+
+SSL\_CTX\_set\_ciphersuites\(\)将默认cipher suites设置到ctx-&gt;tls13\_ciphersuites上：
+
+```
+1392 int SSL_CTX_set_ciphersuites(SSL_CTX *ctx, const char *str)
+1393 {
+1394     int ret = set_ciphersuites(&(ctx->tls13_ciphersuites), str);
+1395         
+1396     if (ret && ctx->cipher_list != NULL) {
+1397         /* We already have a cipher_list, so we need to update it */
+1398         return update_cipher_list(&ctx->cipher_list, &ctx->cipher_list_by_id,
+1399                                   ctx->tls13_ciphersuites);
+1400     }                             
+1401     
+1402     return ret;
+1403 }   
+```
+
+### 5.2 Signature Algorithm
 
 
 
-### 5.2 Key Exchange Algorithm
+### 5.3 Key Exchange Algorithm
 
 
 
-### 5.3 Encryption/Decryption Algorighm
+### 5.4 Encryption/Decryption Algorighm
 
 
 
-### 5.4 Hash Algorithm
+### 5.5 Hash Algorithm
 
 ### 
 

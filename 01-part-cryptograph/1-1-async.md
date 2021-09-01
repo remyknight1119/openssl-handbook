@@ -1,4 +1,4 @@
-# 一、 ASYNC
+# Chapter 1 ASYNC
 
 ## 1.1 Async mode的功能
 
@@ -10,7 +10,7 @@ Asyn mode是OpenSSL支持异步I/O（AIO）的模式，在这个模式下openssl
 
 比较重要的数据结构：
 
-ASYNC\_JOB: fibrectx用来保存和恢复栈、寄存器；waitctx指向SSL的waitctx。
+ASYNC\_JOB: fibrectx用来保存和恢复栈、寄存器；waitctx指向SSL的waitctx; job-&gt;fibrectx.fibre.uc\_stack.ss\_sp指向保存stack信息的空间，大小是STACKSIZE\(32768\) bytes.
 
 async\_ctx: 全局唯一，currjob指向一个ASYNC\_JOB；dispatcher用来保存和恢复栈、寄存器，与ASYNC\_JOB的fibrectx配合使用。
 
@@ -18,7 +18,7 @@ async\_ctx: 全局唯一，currjob指向一个ASYNC\_JOB；dispatcher用来保�
 
 开启Async mode可以使用：SSL\_CTX\_set\_mode\(ctx, SSL\_MODE\_ASYNC\)或SSL\_set\_mode\(ssl, SSL\_MODE\_ASYNC\)。在user调用SSL\_do\_handshake\(\)（SSL\_read\(\)/SSL\_write\(\)类似）时，会调用到ssl\_start\_async\_job\(\)：
 
-```
+```c
 3578 int SSL_do_handshake(SSL *s)
 3579 {  
 3580     int ret = 1;
@@ -51,7 +51,7 @@ ASYNC\_get\_current\_job\(\)就是返回全局的async\_ctx-&gt;currjob，如果
 
 ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调函数是ssl\_do\_handshake\_intern，其实就是s-&gt;handshake\_func的简单包裹。
 
-```
+```c
 168 int ASYNC_start_job(ASYNC_JOB **job, ASYNC_WAIT_CTX *wctx, int *ret,
 169                     int (*func)(void *), void *args, size_t size)
 170 {
@@ -143,7 +143,7 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 
 第一次调用时ctx-&gt;currjob为NULL，会调用async\_get\_pool\_job\(\)申请一个job，在242-243行调用async\_fibre\_swapcontext\(\)时会触发async\_start\_func\(\)函数：
 
-```
+```c
 144 void async_start_func(void)
 145 {
 146     ASYNC_JOB *job;       
@@ -170,9 +170,71 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 
 152行调用的就是ssl\_do\_handshake\_intern\(\)函数，也就是说在切换了执行上下文后再执行handshake的实际动作；
 
+async\_get\_pool\_job\(\)函数负责申请和设置job-&gt;fibrectx数据结构：
+
+```c
+102 static ASYNC_JOB *async_get_pool_job(void) {
+103     ASYNC_JOB *job;
+104     async_pool *pool;
+105 
+106     pool = (async_pool *)CRYPTO_THREAD_get_local(&poolkey);
+107     if (pool == NULL) {
+108         /*
+109          * Pool has not been initialised, so init with the defaults, i.e.
+110          * no max size and no pre-created jobs
+111          */
+112         if (ASYNC_init_thread(0, 0) == 0)
+113             return NULL;  
+114         pool = (async_pool *)CRYPTO_THREAD_get_local(&poolkey);
+115     }
+116 
+117     job = sk_ASYNC_JOB_pop(pool->jobs);
+118     if (job == NULL) {    
+119         /* Pool is empty */
+120         if ((pool->max_size != 0) && (pool->curr_size >= pool->max_size))
+121             return NULL;  
+122 
+123         job = async_job_new();
+124         if (job != NULL) {
+125             if (! async_fibre_makecontext(&job->fibrectx)) {
+126                 async_job_free(job);       
+127                 return NULL;
+128             }             
+129             pool->curr_size++;
+130         }
+131     }
+132     return job;
+133 }
+```
+
+125行async\_fibre\_makecontext\(\)函数有两个关键步骤：
+
+```c
+ 35 int async_fibre_makecontext(async_fibre *fibre)
+ 36 {           
+ 37     fibre->env_init = 0;
+ 38     if (getcontext(&fibre->fibre) == 0) {
+ 39         fibre->fibre.uc_stack.ss_sp = OPENSSL_malloc(STACKSIZE);
+ 40         if (fibre->fibre.uc_stack.ss_sp != NULL) {
+ 41             fibre->fibre.uc_stack.ss_size = STACKSIZE;
+ 42             fibre->fibre.uc_link = NULL;
+ 43             makecontext(&fibre->fibre, async_start_func, 0);
+ 44             return 1;
+ 45         }
+ 46     } else {
+ 47         fibre->fibre.uc_stack.ss_sp = NULL;
+ 48     }       
+ 49     return 0;   
+ 50 }  
+```
+
+39-41行设置stack缓存空间；
+
+43行设置async\_start\_func\(\)为切换stack之后触发的函数。
+
 在调用到密码算法相关函数（如：RSA 加密/解密）时，这个操作需要提交硬件加速卡来执行，提交请求完毕后需要等待硬件返回结果，这时需要调用ASYNC\_pause\_job\(\)函数来结束本次SSL\_do\_handshake\(\)的调用：
 
-```
+```c
 255 int ASYNC_pause_job(void)
 256 {
 257     ASYNC_JOB *job;

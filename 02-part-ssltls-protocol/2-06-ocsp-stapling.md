@@ -1,2 +1,2 @@
-# 九、OCSP Stapling
+# Chapter 6 OCSP Stapling
 

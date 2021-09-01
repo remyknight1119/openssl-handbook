@@ -1,10 +1,10 @@
-# 七、Certificate Chain
+# Chapter 4 Certificate Chain
 
 ## 1.加载证书
 
 SSL\_CTX\_use\_certificate\(\)可以用来加载证书：
 
-```
+```text
  301 int SSL_CTX_use_certificate(SSL_CTX *ctx, X509 *x)
  302 {
  303     int rv;
@@ -105,14 +105,14 @@ SSL\_CTX\_use\_certificate\(\)可以用来加载证书：
 
 SSL\_CTX\_add0\_chain\_cert\(\)和SSL\_CTX\_add1\_chain\_cert\(\)函数用来加载证书链:
 
-```
+```text
 1345 # define SSL_CTX_add0_chain_cert(ctx,x509) \
 1346         SSL_CTX_ctrl(ctx,SSL_CTRL_CHAIN_CERT,0,(char *)(x509))
 1347 # define SSL_CTX_add1_chain_cert(ctx,x509) \
 1348         SSL_CTX_ctrl(ctx,SSL_CTRL_CHAIN_CERT,1,(char *)(x509))
 ```
 
-```
+```text
 2270 long SSL_CTX_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
 2271 {
 2272     long l;
@@ -141,7 +141,7 @@ SSL\_CTX\_add0\_chain\_cert\(\)和SSL\_CTX\_add1\_chain\_cert\(\)函数用来加
 
 ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
 
-```
+```text
 3763 long ssl3_ctx_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
 3764 {
 3765     switch (cmd) {      
@@ -154,7 +154,7 @@ ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
 ...
 ```
 
-```
+```text
  288 int ssl_cert_add0_chain_cert(SSL *s, SSL_CTX *ctx, X509 *x)
  289 {
  290     int r;
@@ -192,7 +192,7 @@ ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
 
 SSL Server收到ClientHello后，需要构建Server Ceritificate来回应:
 
-```
+```text
 3774 int tls_construct_server_certificate(SSL *s, WPACKET *pkt)
 3775 {
 3776     CERT_PKEY *cpk = s->s3->tmp.cert;
@@ -223,7 +223,7 @@ SSL Server收到ClientHello后，需要构建Server Ceritificate来回应:
 
 ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息中:
 
-```
+```text
  998 unsigned long ssl3_output_cert_chain(SSL *s, WPACKET *pkt, CERT_PKEY *cpk)
  999 {
 1000     if (!WPACKET_start_sub_packet_u24(pkt)) {
@@ -245,7 +245,7 @@ ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息�
 1016 }   
 ```
 
-```
+```text
  901 /* Add certificate chain to provided WPACKET */
  902 static int ssl_add_cert_chain(SSL *s, WPACKET *pkt, CERT_PKEY *cpk)
  903 {
@@ -350,72 +350,74 @@ ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息�
 
 证书链的制作脚本如下：
 
-    #!/bin/bash
+```text
+#!/bin/bash
 
-    set -e
-    dir=`dirname $0`
-    key_bits=2048
-    expire_days=3650
-    subj=/C="CN"/ST="Liaoning"/L="Shenyang"/O="Dove"/OU="dove"/CN="doveR"
-    subji=/C="CN"/ST="Liaoning"/L="Shenyang"/O="Dove"/OU="dove"/CN="doveI"
-    subjs=/C="CN"/ST="Liaoning"/L="Shenyang"/O="Dove"/OU="dove"/CN="doveS"
-    subj2=/C="CN"/ST="Liaoning"/L="Shenyang"/O="DoveCERT"/OU="dove"/CN="dove"
-    server="server-chain"
-    param=$server
-    if [ -d $param ]; then
-        rm -r $param
-    fi
-    mkdir -p $param
-    cd $param
-    ca_name=ca-root-$param
-    root_cacer=$ca_name.cer
-    root_cakey=$ca_name.key
-    ca_name=ca-sub1-$param
-    sub1_cacer=$ca_name.cer
-    sub1_cakey=$ca_name.key
-    ca_name=ca-sub2-$param
-    cacer=$ca_name.cer
-    cakey=$ca_name.key
-    cer=$param.cer
-    csr=$param.csr
-    key=$param.key
+set -e
+dir=`dirname $0`
+key_bits=2048
+expire_days=3650
+subj=/C="CN"/ST="Liaoning"/L="Shenyang"/O="Dove"/OU="dove"/CN="doveR"
+subji=/C="CN"/ST="Liaoning"/L="Shenyang"/O="Dove"/OU="dove"/CN="doveI"
+subjs=/C="CN"/ST="Liaoning"/L="Shenyang"/O="Dove"/OU="dove"/CN="doveS"
+subj2=/C="CN"/ST="Liaoning"/L="Shenyang"/O="DoveCERT"/OU="dove"/CN="dove"
+server="server-chain"
+param=$server
+if [ -d $param ]; then
+    rm -r $param
+fi
+mkdir -p $param
+cd $param
+ca_name=ca-root-$param
+root_cacer=$ca_name.cer
+root_cakey=$ca_name.key
+ca_name=ca-sub1-$param
+sub1_cacer=$ca_name.cer
+sub1_cakey=$ca_name.key
+ca_name=ca-sub2-$param
+cacer=$ca_name.cer
+cakey=$ca_name.key
+cer=$param.cer
+csr=$param.csr
+key=$param.key
 
-    mkdir -p $dir/demoCA/{private,newcerts}
-    touch $dir/demoCA/index.txt
-    echo 02 > $dir/demoCA/serial
-    cd demoCA
-    ln -sf ../$root_cacer cacert.pem
-    cd -
-    cd demoCA/private
-    ln -sf ../../$root_cakey cakey.pem
-    cd -
-    #Root CA
-    openssl genrsa -out $root_cakey $key_bits
-    openssl req -x509 -newkey rsa:$key_bits -keyout $root_cakey -nodes -out $root_cacer -subj $subj -days $expire_days
-    echo "===================Gen Root CA OK===================="
+mkdir -p $dir/demoCA/{private,newcerts}
+touch $dir/demoCA/index.txt
+echo 02 > $dir/demoCA/serial
+cd demoCA
+ln -sf ../$root_cacer cacert.pem
+cd -
+cd demoCA/private
+ln -sf ../../$root_cakey cakey.pem
+cd -
+#Root CA
+openssl genrsa -out $root_cakey $key_bits
+openssl req -x509 -newkey rsa:$key_bits -keyout $root_cakey -nodes -out $root_cacer -subj $subj -days $expire_days
+echo "===================Gen Root CA OK===================="
 
-    #Sub1 CA
-    openssl genrsa -out $sub1_cakey $key_bits
-    openssl req -new -key $sub1_cakey -sha256 -out $csr -subj $subji -days $expire_days
-    openssl ca -extensions v3_ca -batch -notext -in $csr -out $sub1_cacer
-    echo "===================Gen Sub1 CA OK===================="
+#Sub1 CA
+openssl genrsa -out $sub1_cakey $key_bits
+openssl req -new -key $sub1_cakey -sha256 -out $csr -subj $subji -days $expire_days
+openssl ca -extensions v3_ca -batch -notext -in $csr -out $sub1_cacer
+echo "===================Gen Sub1 CA OK===================="
 
-    #Sub2 CA
-    openssl genrsa -out $cakey $key_bits
-    openssl req -new -key $cakey -sha256 -out $csr -subj $subjs -days $expire_days
-    openssl ca -extensions v3_ca -batch -notext -in $csr -out $cacer -cert $sub1_cacer -keyfile $sub1_cakey
+#Sub2 CA
+openssl genrsa -out $cakey $key_bits
+openssl req -new -key $cakey -sha256 -out $csr -subj $subjs -days $expire_days
+openssl ca -extensions v3_ca -batch -notext -in $csr -out $cacer -cert $sub1_cacer -keyfile $sub1_cakey
 
-    echo "===================Gen Sub2 CA OK===================="
+echo "===================Gen Sub2 CA OK===================="
 
-    #Server cert
-    openssl genrsa -out $key $key_bits
-    openssl req -new -key $key -sha256 -out $csr -subj $subj2 -days $expire_days
-    openssl x509 -req -in $csr -sha256 -out $cer -CA $cacer -CAkey $cakey -CAserial t_ssl_ca.srl -CAcreateserial -days $expire_days -extensions v3_req
-    #openssl pkcs12 -export -clcerts -in client.cer -inkey client.key -out client.p12
-    rm -f *.csr *.srl
+#Server cert
+openssl genrsa -out $key $key_bits
+openssl req -new -key $key -sha256 -out $csr -subj $subj2 -days $expire_days
+openssl x509 -req -in $csr -sha256 -out $cer -CA $cacer -CAkey $cakey -CAserial t_ssl_ca.srl -CAcreateserial -days $expire_days -extensions v3_req
+#openssl pkcs12 -export -clcerts -in client.cer -inkey client.key -out client.p12
+rm -f *.csr *.srl
 
-    cat $cer $cacer $sub1_cacer |tee $param.pem
-    echo "===================Gen All OK===================="
+cat $cer $cacer $sub1_cacer |tee $param.pem
+echo "===================Gen All OK===================="
+```
 
     在Handshake过程中Server会按照$param.pem文件中的顺序发送证书链。Client在收到证书链的时候会先验证用户证书，但无法找到发行者\(Issuer\)，然后会遍历证书链找到Issuer，再找到Issuer的Issuer，直到能用Root CA进行验证，从而完成了整个证书链的验证。
 

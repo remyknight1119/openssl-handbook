@@ -48,7 +48,7 @@
 * [Chapter 3 Quickassist Driver](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/README.md)
   * [3.1 Data Structure](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.1-data-structure.md)
   * [3.2 Module Init](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.2-module-init.md)
-  * [3.3 ETR Data Init](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.3-etr-data-init.md)
+  * [3.3 Ring](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.3-etr-data-init.md)
 * [Chapter 4 Nginx & QAT](part5-ssl-accelerate-intel-qat/chapter-4-nginx-and-qat.md)
 * [Chapter 5 HAProxy & QAT](part5-ssl-accelerate-intel-qat/chapter-5-haproxy-and-qat.md)
 * [Chapter 6 DPDK & QAT](part5-ssl-accelerate-intel-qat/chapter-6-dpdk-and-qat.md)

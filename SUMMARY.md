@@ -52,6 +52,7 @@
   * [3.4 Process Management](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.4-process-management.md)
   * [3.5 Engine Init](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.5-engine-init.md)
   * [3.6 Cipher Request](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.6-cipher-request.md)
+  * [3.7 Cipher Response](part5-ssl-accelerate-intel-qat/chapter-3-quickassist-driver/3.7-cipher-response.md)
 * [Chapter 4 Nginx & QAT](part5-ssl-accelerate-intel-qat/chapter-4-nginx-and-qat.md)
 * [Chapter 5 HAProxy & QAT](part5-ssl-accelerate-intel-qat/chapter-5-haproxy-and-qat.md)
 * [Chapter 6 DPDK & QAT](part5-ssl-accelerate-intel-qat/chapter-6-dpdk-and-qat.md)

@@ -163,6 +163,10 @@ out:
 
 ## 3.2 Server
 
+使用默认的SSL接口来实现DTLS server功能的缺点是无法实现多DTLS连接并发，因为一个UDP fd只能与一条DTLS连接关联，这条连接关闭之后才能关联下一个。
+
+解决DTLS连接并发问题的方法是使用mem BIO来注入和输出DTLS数据，使用UDP socket收发这些数据，并使用源IP+源端口来标识连接。这种方法的缺点是无法应对DDoS攻击，因为需要对每个新的UDP建立一个连接，无法发挥DTLS cookie的防DDoS功能。
+
 ```c
 #include "list.h"
 

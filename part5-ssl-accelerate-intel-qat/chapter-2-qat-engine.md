@@ -1,124 +1,8 @@
 # Chapter 2 QAT Engine
 
-## 2.1 Makefile
+## 2.1 bind\_qat()
 
-如果不使用QAT Engine自带的工具生成Makefile，可以使用下面这个Makefile:
-
-```text
-TOPDIR=../../..
-OPENSSL_TOP_DIR=$(TOPDIR)/$(CONFIG_FORTIDEV)
-QAT_ENGINE_DIR=$(TOPDIR)/migbase/ssl/qat
-QAT_ROOT=$(abspath $(LINUX_EXTRA_MODULE_SOURCE_DIR)/quickassist)
-QAT_USDM=$(QAT_ROOT)/utilities/libusdm_drv
-QAT_ICP_API=$(QAT_ROOT)/include
-QAT_ICP_LAC_API=$(QAT_ICP_API)/lac
-QAT_ICP_SAL_API=$(QAT_ROOT)/lookaside/access_layer/include
-
-QAT_SHARED_LIB_DEPS_DRIVER = -L$(QAT_ROOT)/build/ -lqat_s
-QAT_SHARED_LIB_DEPS_QAE_MEM = -L$(QAT_USDM)/ -lusdm_drv_s
-QAT_SHARED_LIB_DEPS_UDEV = -L$(CONFIG_FORTIDEV)/lib -ludev
-
-#cflags_enable_upstream_driver = -DOPENSSL_ENABLE_QAT_UPSTREAM_DRIVER
-#cflags_enable_usdm = -DUSE_QAE_MEM
-#cflags_qat_debug_file = /var/log/qat.log
-#enable_multi_thread =
-#enable_openssl_install_build_arch_path =
-#enable_qat_auto_engine_init_on_fork =
-#enable_qat_ciphers = -DOPENSSL_ENABLE_QAT_CIPHERS
-#enable_qat_debug = yes
-#enable_qat_dh = -DOPENSSL_ENABLE_QAT_DH
-#enable_qat_dsa = -DOPENSSL_ENABLE_QAT_DSA
-#enable_qat_ecdh = -DOPENSSL_ENABLE_QAT_ECDH
-#enable_qat_ecdsa = -DOPENSSL_ENABLE_QAT_ECDSA
-#enable_qat_for_openssl_102 =
-#enable_qat_for_openssl_110 = yes
-#enable_qat_lenstra_protection =
-#enable_qat_mem_debug =
-#enable_qat_mem_warnings =
-#enable_qat_mux =
-#enable_qat_prf = -DOPENSSL_ENABLE_QAT_PRF
-#enable_qat_rsa = -DOPENSSL_ENABLE_QAT_RSA
-#enable_qat_small_pkt_offload =
-#enable_qat_warnings =
-#enable_upstream_driver = yes
-#enable_usdm = yes
-#enable_qat_for_openssl_110 = yes
-#includes = -I$(with_openssl_dir)/include
-#includes_enable_qat_mux =
-
-#include_enable_usdm = -I$(with_usdm_dir)
-#includes_driver = -I$(with_ICP_API_DIR) -I$(with_ICP_LAC_API_DIR) -I$(with_ICP_SAL_API_DIR)
-#with_ICP_API_DIR = $(with_qat_dir)/include
-#with_ICP_DC_DIR =
-#with_ICP_LAC_API_DIR = $(with_ICP_API_DIR)/lac
-#with_ICP_MUX_DIR =
-#with_ICP_SAL_API_DIR = $(with_qat_dir)/lookaside/access_layer/include
-#with_usdm_dir = $(with_qat_dir)/utilities/libusdm_drv
-#with_qat_install_dir = $(with_qat_dir)/build
-
-
-
-INCLUDES= -I. -I$(QAT)/include  -I$(OPENSSL_TOP_DIR) -I$(OPENSSL_TOP_DIR)/include \
-		  -I$(OPENSSL_TOP_DIR)/crypto/include \
-		  -I$(QAT_USDM) -I$(QAT_ICP_SAL_API) -I$(QAT_ICP_API) \
-		  -I$(QAT_ICP_LAC_API) -I$(QAT_ENGINE_DIR)/qat_contig_mem
-CFLAG	= -O3 -DOPENSSL_ENABLE_QAT_UPSTREAM_DRIVER -DUSE_QAE_MEM \
-		  -DOPENSSL_ENABLE_QAT_CIPHERS -DOPENSSL_ENABLE_QAT_DH -DOPENSSL_ENABLE_QAT_DSA -DOPENSSL_ENABLE_QAT_ECDH \
-		  -DOPENSSL_ENABLE_QAT_ECDSA -DOPENSSL_ENABLE_QAT_PRF -DOPENSSL_ENABLE_QAT_RSA -DQAT_HW \
-		  -DOPENSSL_DISABLE_QAT_HKDF -DUSE_USDM_MEM -fPIC
-		  #-DQAT_DEBUG -DQAT_DEBUG_FILE_PATH=/var/log/qat.log -DQAT_WARN -DOPENSSL_ENABLE_QAT_SMALL_PACKET_CIPHER_OFFLOADS
-
-EXTRA_CFLAGS += $(INCLUDES) $(CFLAG)
-EXTRA_LDFLAGS = $(QAT_SHARED_LIB_DEPS_DRIVER) $(QAT_SHARED_LIB_DEPS_QAE_MEM) $(QAT_SHARED_LIB_DEPS_UDEV)
-
-TARGET_SO = libqat.so
-OBJECTS_SO = e_qat.o \
-			 e_qat_err.o \
-			 qat_events.o \
-			 qat_evp.o \
-			 qat_fork.o \
-			 qat_hw_asym_common.o \
-			 qat_hw_callback.o \
-			 qat_hw_ciphers.o \
-			 qat_hw_dh.o \
-			 qat_hw_dsa.o \
-			 qat_hw_ec.o \
-			 qat_hw_ecx.o \
-			 qat_hw_gcm.o \
-			 qat_hw_hkdf.o \
-			 qat_hw_init.o \
-			 qat_hw_polling.o \
-			 qat_hw_prf.o \
-			 qat_hw_rsa.o \
-			 qat_hw_rsa_crt.o \
-			 qat_hw_usdm_inf.o \
-			 qat_sys_call.o \
-			 qat_utils.o
-#			 qat_sw_ec.o \
-			 qat_sw_ecx.o \
-			 qat_sw_freelist.o \
-			 qat_sw_gcm.o \
-			 qat_sw_init.o \
-			 qat_sw_ipsec_inf.o \
-			 qat_sw_polling.o \
-			 qat_sw_queue.o \
-			 qat_sw_rsa.o \
-			 qat_prov_err.o \
-			 qat_hw_multi_thread_inf.o \
-			 qae_mem_utils.o \
-	
-
-TARGET_SO_LIBS = -lcrypto
-
-CLEAN_RULE=1
-
-include $(TOPDIR)/rules.Make
-
-```
-
-## 2.2 bind\_qat\(\)
-
-使用no-hack方式load QAT Engine，是从bind\_qat\(\)函数开始执行的\(详见[1.1 Load Engine](https://app.gitbook.com/@remyknight/s/workspace/~/drafts/-MiMrUr8vQjV4arjHW_r/part5-ssl-accelerate/chapter-1-intel-qat/1.1-load-engine)\):
+使用no-hack方式load QAT Engine，是从bind\_qat()函数开始执行的(详见[1.1 Load Engine](https://app.gitbook.com/@remyknight/s/workspace/\~/drafts/-MiMrUr8vQjV4arjHW\_r/part5-ssl-accelerate/chapter-1-intel-qat/1.1-load-engine)):
 
 ```c
  789 /******************************************************************************
@@ -310,7 +194,7 @@ include $(TOPDIR)/rules.Make
 
 854-878: 设置RSA, DSA, DH, EC, pKey的method, 这样当相关函数被调用时就会通过Engine框架调到这些method。
 
-## 2.3 Engine Init
+## 2.2 Engine Init
 
 ```c
 352 int qat_init(ENGINE *e)
@@ -541,11 +425,9 @@ include $(TOPDIR)/rules.Make
 588 }
 ```
 
-## 2.4 Work Flow
+## 2.3 Work Flow
 
 
 
-## 2.5 Engine Mode
-
-
+## 2.4 Engine Mode
 

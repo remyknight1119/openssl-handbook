@@ -311,5 +311,200 @@ tls1\_default\_timeout()定义：
 
 如果session中有ticket，就需要将它写入到extension中。这个ticket是上次handshake结束后server发过来的.
 
+```c
+2453 MSG_PROCESS_RETURN tls_process_new_session_ticket(SSL *s, PACKET *pkt)                                                                                                                                 
+2454 {
+2455     unsigned int ticklen;
+2456     unsigned long ticket_lifetime_hint, age_add = 0;
+2457     unsigned int sess_len;
+2458     RAW_EXTENSION *exts = NULL;    
+2459     PACKET nonce;
+2460     EVP_MD *sha256 = NULL;
+2461 
+2462     PACKET_null_init(&nonce);
+2463 
+2464     if (!PACKET_get_net_4(pkt, &ticket_lifetime_hint)
+2465         || (SSL_IS_TLS13(s)
+2466             && (!PACKET_get_net_4(pkt, &age_add)
+2467                 || !PACKET_get_length_prefixed_1(pkt, &nonce)))
+2468         || !PACKET_get_net_2(pkt, &ticklen)
+2469         || (SSL_IS_TLS13(s) ? (ticklen == 0 || PACKET_remaining(pkt) < ticklen)
+2470                             : PACKET_remaining(pkt) != ticklen)) {
+2471         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_LENGTH_MISMATCH);                                                                                                                                       
+2472         goto err;
+2473     }
+2474 
+2475     /*
+2476      * Server is allowed to change its mind (in <=TLSv1.2) and send an empty
+2477      * ticket. We already checked this TLSv1.3 case above, so it should never                                                                                                                          
+2478      * be 0 here in that instance
+2479      */
+2480     if (ticklen == 0)
+2481         return MSG_PROCESS_CONTINUE_READING;                                                                                                                                                           
+2482 
+2483     /*
+2484      * Sessions must be immutable once they go into the session cache. Otherwise
+2485      * we can get multi-thread problems. Therefore we don't "update" sessions,
+2486      * we replace them with a duplicate. In TLSv1.3 we need to do this every
+2487      * time a NewSessionTicket arrives because those messages arrive
+2488      * post-handshake and the session may have already gone into the session
+2489      * cache.
+2490      */
+2491     if (SSL_IS_TLS13(s) || s->session->session_id_length > 0) {
+2492         SSL_SESSION *new_sess;
+2493 
+2494         /*
+2495          * We reused an existing session, so we need to replace it with a new
+2496          * one
+2497          */
+2498         if ((new_sess = ssl_session_dup(s->session, 0)) == 0) {
+2499             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_MALLOC_FAILURE);
+2500             goto err;
+2501         }
+2502 
+2503         if ((s->session_ctx->session_cache_mode & SSL_SESS_CACHE_CLIENT) != 0
+2504                 && !SSL_IS_TLS13(s)) {
+2505             /*
+2506              * In TLSv1.2 and below the arrival of a new tickets signals that
+2507              * any old ticket we were using is now out of date, so we remove the
+2508              * old session from the cache. We carry on if this fails
+2509              */
+2510             SSL_CTX_remove_session(s->session_ctx, s->session);
+2511         }
+2512 
+2513         SSL_SESSION_free(s->session);
+2514         s->session = new_sess;
+2515     }
+2516 
+2517     s->session->time = time(NULL);
+2518     ssl_session_calculate_timeout(s->session);
+2519 
+2520     OPENSSL_free(s->session->ext.tick);
+2521     s->session->ext.tick = NULL;
+2522     s->session->ext.ticklen = 0;
+2523 
+2524     s->session->ext.tick = OPENSSL_malloc(ticklen);
+2525     if (s->session->ext.tick == NULL) {
+2526         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_MALLOC_FAILURE);
+2527         goto err;
+2528     }
+2529     if (!PACKET_copy_bytes(pkt, s->session->ext.tick, ticklen)) {
+2530         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_LENGTH_MISMATCH);
+2531         goto err;
+2532     }
+2533 
+2534     s->session->ext.tick_lifetime_hint = ticket_lifetime_hint;
+2535     s->session->ext.tick_age_add = age_add;
+2536     s->session->ext.ticklen = ticklen;
+2537 
+2538     if (SSL_IS_TLS13(s)) {
+2539         PACKET extpkt;
+2540 
+2541         if (!PACKET_as_length_prefixed_2(pkt, &extpkt)
+2542                 || PACKET_remaining(pkt) != 0) {
+2543             SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_LENGTH_MISMATCH);
+2544             goto err;
+2545         }
+2546 
+2547         if (!tls_collect_extensions(s, &extpkt,
+2548                                     SSL_EXT_TLS1_3_NEW_SESSION_TICKET, &exts,
+2549                                     NULL, 1)
+2550                 || !tls_parse_all_extensions(s,
+2551                                              SSL_EXT_TLS1_3_NEW_SESSION_TICKET,
+2552                                              exts, NULL, 0, 1)) {
+2553             /* SSLfatal() already called */
+2554             goto err;
+2555         }
+2556     }
+2557 
+2558     /*
+2559      * There are two ways to detect a resumed ticket session. One is to set
+2560      * an appropriate session ID and then the server must return a match in
+2561      * ServerHello. This allows the normal client session ID matching to work
+2562      * and we know much earlier that the ticket has been accepted. The
+2563      * other way is to set zero length session ID when the ticket is
+2564      * presented and rely on the handshake to determine session resumption.
+2565      * We choose the former approach because this fits in with assumptions
+2566      * elsewhere in OpenSSL. The session ID is set to the SHA256 hash of the
+2567      * ticket.
+2568      */
+2569     sha256 = EVP_MD_fetch(s->ctx->libctx, "SHA2-256", s->ctx->propq);
+2570     if (sha256 == NULL) {
+2571         /* Error is already recorded */
+2572         SSLfatal_alert(s, SSL_AD_INTERNAL_ERROR);
+2573         goto err;
+2574     }
+2575     /*
+2576      * We use sess_len here because EVP_Digest expects an int
+2577      * but s->session->session_id_length is a size_t
+2578      */
+2579     if (!EVP_Digest(s->session->ext.tick, ticklen,
+2580                     s->session->session_id, &sess_len,
+2581                     sha256, NULL)) {
+2582         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_EVP_LIB);
+2583         goto err;
+2584     }
+2585     EVP_MD_free(sha256);
+2586     sha256 = NULL;
+2587     s->session->session_id_length = sess_len;
+2588     s->session->not_resumable = 0;
+2589 
+2590     /* This is a standalone message in TLSv1.3, so there is no more to read */
+2591     if (SSL_IS_TLS13(s)) {
+2592         const EVP_MD *md = ssl_handshake_md(s);
+2593         int hashleni = EVP_MD_get_size(md);
+2594         size_t hashlen;
+2595         static const unsigned char nonce_label[] = "resumption";
+2596 
+2597         /* Ensure cast to size_t is safe */
+2598         if (!ossl_assert(hashleni >= 0)) {
+2599             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+2600             goto err;
+2601         }
+2602         hashlen = (size_t)hashleni;
+2603 
+2604         if (!tls13_hkdf_expand(s, md, s->resumption_master_secret,
+2605                                nonce_label,
+2606                                sizeof(nonce_label) - 1,
+2607                                PACKET_data(&nonce),
+2608                                PACKET_remaining(&nonce),
+2609                                s->session->master_key,
+2610                                hashlen, 1)) {
+2611             /* SSLfatal() already called */
+2612             goto err;
+2613         }
+2614         s->session->master_key_length = hashlen;
+2615 
+2616         OPENSSL_free(exts);
+2617         ssl_update_cache(s, SSL_SESS_CACHE_CLIENT);
+2618         return MSG_PROCESS_FINISHED_READING;
+2619     }
+2620 
+2621     return MSG_PROCESS_CONTINUE_READING;
+2622  err:
+2623     EVP_MD_free(sha256);
+2624     OPENSSL_free(exts);
+2625     return MSG_PROCESS_ERROR;
+2626 }
+```
+
+2464-2473: 解析NEW\_SESSION\_TICKET消息的各个字段;&#x20;
+
+2491-2515: 如果是TLSv1.3或已经有session在重用，则复制当前的session(除了ticket的部分)到new\_sess, 并用其取代当前session; 如果是TLSv1.2或者更低版本且是CLIENT CACHE模式，则将旧的session移出cache;
+
+2517: 更新session时间，以便检查超时;
+
+2524-2537: 将当前ticket记录到session中;
+
+2538-2556: 如果是TLSv1.3则处理下Early Data Extension;
+
+2526-2584: 使用ticket生成Session ID以便在session resume的过程中让server回应相同的Session ID来表示ticket已经被接受;
+
+2591-2614: 如果是TLSv1.3, 则更新master key;
+
+2617: 更新client cache.
+
+### 8.2.3 Client Cache
+
 ## 8.3 Server Side
 

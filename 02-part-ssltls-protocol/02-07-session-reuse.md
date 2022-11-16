@@ -264,7 +264,52 @@ tls1\_default\_timeout()定义：
 
 ### 8.2.2 Session Ticket
 
+如果使用session ticket, client需要在ClientHello的Extension中写入session中的ticket:
 
+```c
+ 254 EXT_RETURN tls_construct_ctos_session_ticket(SSL *s, WPACKET *pkt,          
+ 255                                              unsigned int context, X509 *x, 
+ 256                                              size_t chainidx)                                                                                                                                          
+ 257 {
+ 258     size_t ticklen;
+ 259 
+ 260     if (!tls_use_ticket(s))
+ 261         return EXT_RETURN_NOT_SENT;                                                                                                                                                                    
+ 262 
+ 263     if (!s->new_session && s->session != NULL 
+ 264             && s->session->ext.tick != NULL
+ 265             && s->session->ssl_version != TLS1_3_VERSION) {
+ 266         ticklen = s->session->ext.ticklen;
+ 267     } else if (s->session && s->ext.session_ticket != NULL
+ 268                && s->ext.session_ticket->data != NULL) {
+ 269         ticklen = s->ext.session_ticket->length;
+ 270         s->session->ext.tick = OPENSSL_malloc(ticklen);
+ 271         if (s->session->ext.tick == NULL) {
+ 272             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);                                                                                                                                  
+ 273             return EXT_RETURN_FAIL;    
+ 274         }
+ 275         memcpy(s->session->ext.tick,          
+ 276                s->ext.session_ticket->data, ticklen);
+ 277         s->session->ext.ticklen = ticklen;
+ 278     } else {
+ 279         ticklen = 0;
+ 280     }
+ 281 
+ 282     if (ticklen == 0 && s->ext.session_ticket != NULL &&
+ 283             s->ext.session_ticket->data == NULL)
+ 284         return EXT_RETURN_NOT_SENT;                                                                                                                                                                    
+ 285 
+ 286     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_session_ticket)
+ 287             || !WPACKET_sub_memcpy_u16(pkt, s->session->ext.tick, ticklen)) {
+ 288         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+ 289         return EXT_RETURN_FAIL;
+ 290     }
+ 291 
+ 292     return EXT_RETURN_SENT;
+ 293 }
+```
+
+如果session中有ticket，就需要将它写入到extension中。这个ticket是上次handshake结束后server发过来的.
 
 ## 8.3 Server Side
 

@@ -59,6 +59,8 @@ Client使用session reuse的方法是把Session结构体保存下来，设置到
 
 ## 8.2 Client Side
 
+### 8.2.1 Session初始化
+
 ```c
 1093 int tls_construct_client_hello(SSL *s, WPACKET *pkt)
 1094 {
@@ -202,6 +204,65 @@ s->session\_ctx实际上指向的是ctx, 在ctx里面session\_timeout的值也�
 3252     /* We take the system default. */
 3253     ret->session_timeout = meth->get_timeout();
 ```
+
+meth->get\_timeout指向tls1\_default\_timeout:
+
+```c
+2240 # define IMPLEMENT_tls_meth_func(version, flags, mask, func_name, s_accept, \
+2241                                  s_connect, enc_data) \
+2242 const SSL_METHOD *func_name(void)  \
+2243         { \
+2244         static const SSL_METHOD func_name##_data= { \
+2245                 version, \
+2246                 flags, \
+2247                 mask, \
+2248                 tls1_new, \
+2249                 tls1_clear, \
+2250                 tls1_free, \
+2251                 s_accept, \
+2252                 s_connect, \
+2253                 ssl3_read, \
+2254                 ssl3_peek, \
+2255                 ssl3_write, \
+2256                 ssl3_shutdown, \
+2257                 ssl3_renegotiate, \
+2258                 ssl3_renegotiate_check, \
+2259                 ssl3_read_bytes, \
+2260                 ssl3_write_bytes, \
+2261                 ssl3_dispatch_alert, \
+2262                 ssl3_ctrl, \
+2263                 ssl3_ctx_ctrl, \
+2264                 ssl3_get_cipher_by_char, \
+2265                 ssl3_put_cipher_by_char, \
+2266                 ssl3_pending, \
+2267                 ssl3_num_ciphers, \
+2268                 ssl3_get_cipher, \
+2269                 tls1_default_timeout, \
+2270                 &enc_data, \
+2271                 ssl_undefined_void_function, \
+2272                 ssl3_callback_ctrl, \
+2273                 ssl3_ctx_callback_ctrl, \
+2274         }; \
+2275         return &func_name##_data; \
+2276         }
+```
+
+tls1\_default\_timeout()定义：
+
+```c
+ 101 long tls1_default_timeout(void)
+ 102 {
+ 103     /*
+ 104      * 2 hours, the 24 hours mentioned in the TLSv1 spec is way too long for
+ 105      * http, the cache would over fill
+ 106      */
+ 107     return (60 * 60 * 2);
+ 108 }
+```
+
+可以看出session的默认timeout值是2 hours.
+
+### 8.2.2 Session Ticket
 
 
 

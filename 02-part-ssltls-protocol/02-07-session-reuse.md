@@ -1,4 +1,4 @@
-# Chapter 8 Session reuse
+# Chapter 8 Session Resumption
 
 ## 8.1 Sample Code
 
@@ -264,7 +264,9 @@ tls1\_default\_timeout()定义：
 
 Client和Server可以使用Session ticket来恢复session, TLSv1.3可以使用NEW SESSION TICKET+PSK Extension来发送ticket, 其它版本则只能通过NEW SESSION TICKET消息来传递ticket.
 
-### 8.3.1 Server Send
+### 8.3.1 Ticket Send
+
+<figure><img src="../.gitbook/assets/Ticket1.png" alt=""><figcaption></figcaption></figure>
 
 Session Ticket消息是由Server端在handshake完成之后发送的:
 
@@ -438,29 +440,7 @@ Session Ticket消息是由Server端在handshake完成之后发送的:
 
 4027: 更新server session cache.
 
-如果TLSv1.2没有设置NO\_TICKET，server增加在Session Ticket Extension:
-
-```c
-1387 EXT_RETURN tls_construct_stoc_session_ticket(SSL *s, WPACKET *pkt,
-1388                                              unsigned int context, X509 *x, 
-1389                                              size_t chainidx)               
-1390 {
-1391     if (!s->ext.ticket_expected || !tls_use_ticket(s)) {
-1392         s->ext.ticket_expected = 0;    
-1393         return EXT_RETURN_NOT_SENT;    
-1394     }
-1395 
-1396     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_session_ticket)
-1397             || !WPACKET_put_bytes_u16(pkt, 0)) {
-1398         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
-1399         return EXT_RETURN_FAIL; 
-1400     }
-1401 
-1402     return EXT_RETURN_SENT;
-1403 }
-```
-
-### 8.3.2 Client Recv
+### 8.3.2 Ticket Recive
 
 Client收到Server发送的NEW SESSION TICKET消息:
 
@@ -657,7 +637,11 @@ Client收到Server发送的NEW SESSION TICKET消息:
 
 2617: 更新client cache.
 
-如果是TLSv1.3 client需要在ClientHello的Extension中写入session中的ticket:
+### 8.3.3 Session Resume by ticket
+
+#### 8.3.3.1 TLSv1.2
+
+如果client想要接收ticket, 则需要在ClientHello的Session Ticket Extension中写入0长度的ticket:
 
 ```c
  254 EXT_RETURN tls_construct_ctos_session_ticket(SSL *s, WPACKET *pkt,          
@@ -702,7 +686,214 @@ Client收到Server发送的NEW SESSION TICKET消息:
  293 }
 ```
 
-如果session中有ticket，就需要将它写入到extension中。这个ticket是上次handshake结束后server发过来的.
+第一次会话没有session ticket，所以ticketlen是0；
+
+Server收到ClientHello的Session Ticket Extension之后，居然除了调用一下callback之外什么都没做：
+
+```c
+ 246 int tls_parse_ctos_session_ticket(SSL *s, PACKET *pkt, unsigned int context,
+ 247                                   X509 *x, size_t chainidx)      
+ 248 {
+ 249     if (s->ext.session_ticket_cb &&
+ 250             !s->ext.session_ticket_cb(s, PACKET_data(pkt),
+ 251                                   PACKET_remaining(pkt),         
+ 252                                   s->ext.session_ticket_cb_arg)) {
+ 253         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+ 254         return 0;
+ 255     }
+ 256 
+ 257     return 1;
+ 258 }
+```
+
+如果没有设置NO\_TICKET，server会在ServerHello中添加一个0长度的Session Ticket Extension表示它同意使用ticket:
+
+```c
+1387 EXT_RETURN tls_construct_stoc_session_ticket(SSL *s, WPACKET *pkt,
+1388                                              unsigned int context, X509 *x, 
+1389                                              size_t chainidx)               
+1390 {
+1391     if (!s->ext.ticket_expected || !tls_use_ticket(s)) {
+1392         s->ext.ticket_expected = 0;    
+1393         return EXT_RETURN_NOT_SENT;    
+1394     }
+1395 
+1396     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_session_ticket)
+1397             || !WPACKET_put_bytes_u16(pkt, 0)) {
+1398         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1399         return EXT_RETURN_FAIL; 
+1400     }
+1401 
+1402     return EXT_RETURN_SENT;
+1403 }
+```
+
+Client收到这个Extension之后:
+
+```c
+1358 int tls_parse_stoc_session_ticket(SSL *s, PACKET *pkt, unsigned int context,
+1359                                   X509 *x, size_t chainidx)
+1360 {       
+1361     if (s->ext.session_ticket_cb != NULL &&
+1362         !s->ext.session_ticket_cb(s, PACKET_data(pkt),
+1363                               PACKET_remaining(pkt),
+1364                               s->ext.session_ticket_cb_arg)) {
+1365         SSLfatal(s, SSL_AD_HANDSHAKE_FAILURE, SSL_R_BAD_EXTENSION);
+1366         return 0;
+1367     }
+1368         
+1369     if (!tls_use_ticket(s)) {
+1370         SSLfatal(s, SSL_AD_UNSUPPORTED_EXTENSION, SSL_R_BAD_EXTENSION);
+1371         return 0;
+1372     }   
+1373     if (PACKET_remaining(pkt) > 0) {
+1374         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+1375         return 0;
+1376     }
+1377 
+1378     s->ext.ticket_expected = 1;
+1379         
+1380     return 1;
+1381 }
+```
+
+设置s->ext.ticket\_expected = 1作下标记.
+
+第一次会话结束后，client保存session结构，在下一次SSL handshake开始之前将session设置到SSL结构上。这样在ClientHello的Session Ticket Extension里面就会带上ticket的值。
+
+<figure><img src="../.gitbook/assets/Ticket2.png" alt=""><figcaption></figcaption></figure>
+
+Server在处理ClientHello的时候会调用ssl\_get\_prev\_session()来恢复session:
+
+```c
+ 546 /*-
+ 547  * ssl_get_prev attempts to find an SSL_SESSION to be used to resume this
+ 548  * connection. It is only called by servers.
+ 549  *
+ 550  *   hello: The parsed ClientHello data
+ 551  *
+ 552  * Returns:
+ 553  *   -1: fatal error
+ 554  *    0: no session found
+ 555  *    1: a session may have been found.
+ 556  *
+ 557  * Side effects:
+ 558  *   - If a session is found then s->session is pointed at it (after freeing an
+ 559  *     existing session if need be) and s->verify_result is set from the session.
+ 560  *   - Both for new and resumed sessions, s->ext.ticket_expected is set to 1
+ 561  *     if the server should issue a new session ticket (to 0 otherwise).
+ 562  */
+ 563 int ssl_get_prev_session(SSL *s, CLIENTHELLO_MSG *hello)
+ 564 {
+ 565     /* This is used only by servers. */
+ 566
+ 567     SSL_SESSION *ret = NULL;
+ 568     int fatal = 0;
+ 569     int try_session_cache = 0;
+ 570     SSL_TICKET_STATUS r;
+ 571
+...
+ 586     } else {
+ 587         /* sets s->ext.ticket_expected */
+ 588         r = tls_get_ticket_from_client(s, hello, &ret);
+ 589         switch (r) {
+ 590         case SSL_TICKET_FATAL_ERR_MALLOC:
+ 591         case SSL_TICKET_FATAL_ERR_OTHER:
+ 592             fatal = 1;
+ 593             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+ 594             goto err;
+ 595         case SSL_TICKET_NONE:
+ 596         case SSL_TICKET_EMPTY:
+ 597             if (hello->session_id_len > 0) {
+ 598                 try_session_cache = 1;
+ 599                 ret = lookup_sess_in_cache(s, hello->session_id,
+ 600                                            hello->session_id_len);
+ 601             }
+ 602             break;
+ 603         case SSL_TICKET_NO_DECRYPT:
+ 604         case SSL_TICKET_SUCCESS:
+ 605         case SSL_TICKET_SUCCESS_RENEW:
+ 606             break;
+ 607         }
+ 608     }
+ 609
+ 610     if (ret == NULL)
+ 611         goto err;
+...
+ 644
+ 645     if (sess_timedout(time(NULL), ret)) {
+ 646         ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_timeout);
+ 647         if (try_session_cache) {
+ 648             /* session was from the cache, so remove it */
+ 649             SSL_CTX_remove_session(s->session_ctx, ret);
+ 650         }
+ 651         goto err;
+ 652     }
+...
+ 666
+ 667     if (!SSL_IS_TLS13(s)) {
+ 668         /* We already did this for TLS1.3 */
+ 669         SSL_SESSION_free(s->session);
+ 670         s->session = ret;
+ 671     }
+ 672
+ 673     ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_hit);
+ 674     s->verify_result = s->session->verify_result;
+ 675     return 1;
+ ...
+```
+
+588: 调用tls\_get\_ticket\_from\_client()从ClientHello Session Ticket Extension中恢复session;
+
+645-649: 检查session是否超时;
+
+669-670: 用恢复的session取代旧session;
+
+673: 更新计数;
+
+674: 跳过verify.
+
+```c
+1724 /*-     
+1725  * Gets the ticket information supplied by the client if any.
+1726  *      
+1727  *   hello: The parsed ClientHello data
+1728  *   ret: (output) on return, if a ticket was decrypted, then this is set to
+1729  *       point to the resulting session.
+1730  */     
+1731 SSL_TICKET_STATUS tls_get_ticket_from_client(SSL *s, CLIENTHELLO_MSG *hello,
+1732                                              SSL_SESSION **ret)
+1733 {                                
+1734     size_t size;
+1735     RAW_EXTENSION *ticketext;
+1736 
+1737     *ret = NULL;
+1738     s->ext.ticket_expected = 0;
+1739     
+1740     /*
+1741      * If tickets disabled or not supported by the protocol version
+1742      * (e.g. TLSv1.3) behave as if no ticket present to permit stateful
+1743      * resumption.
+1744      */
+1745     if (s->version <= SSL3_VERSION || !tls_use_ticket(s))
+1746         return SSL_TICKET_NONE;
+1747 
+1748     ticketext = &hello->pre_proc_exts[TLSEXT_IDX_session_ticket];
+1749     if (!ticketext->present)
+1750         return SSL_TICKET_NONE;
+1751 
+1752     size = PACKET_remaining(&ticketext->data);
+1753 
+1754     return tls_decrypt_ticket(s, PACKET_data(&ticketext->data), size,
+1755                               hello->session_id, hello->session_id_len, ret);
+1756 }
+```
+
+以上步骤完成后，Client和Server的handshake就可以跳过Certificate的认证和密钥协商直接进行通信.
+
+#### 8.3.3.2 TLSv1.3
+
+
 
 ## 8.4 Session ID
 

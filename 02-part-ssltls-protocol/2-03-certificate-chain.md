@@ -2,9 +2,9 @@
 
 ## 1.加载证书
 
-SSL\_CTX\_use\_certificate\(\)可以用来加载证书：
+SSL\_CTX\_use\_certificate()可以用来加载证书：
 
-```text
+```
  301 int SSL_CTX_use_certificate(SSL_CTX *ctx, X509 *x)
  302 {
  303     int rv;
@@ -81,38 +81,38 @@ SSL\_CTX\_use\_certificate\(\)可以用来加载证书：
  374 }
 ```
 
-327: ssl\_cert\_lookup\_by\_pkey\(\)函数找出pkey所对应的类型，写入i中;
+327: ssl\_cert\_lookup\_by\_pkey()函数找出pkey所对应的类型，写入i中;
 
 337-366: 如果已经加载的private key，检查cert与key是否匹配;
 
-370: 将证书赋值到pkeys\[\]数组，不同类型的key由于i不同因而不会冲突;
+370: 将证书赋值到pkeys\[]数组，不同类型的key由于i不同因而不会冲突;
 
 371: 设置一个“快捷方式”。
 
-## 2. 证书链\(Certificate Chain\)
+## 2. 证书链(Certificate Chain)
 
 ### 2.1 Certificate Chain简介
 
-    SSL的CA证书可分为两种：Root CA（根CA证书）和Intermediate CA（中间CA证书）。其中Root CA是信任锚点，一条证书链中只能有一个。Intermediate CA可以有多个。Root CA通常不直接签发用户证书，而是签发Intermediate CA，由Intermediate CA来签发终用户书。它们之间的关系如下图所示：
+&#x20;   SSL的CA证书可分为两种：Root CA（根CA证书）和Intermediate CA（中间CA证书）。其中Root CA是信任锚点，一条证书链中只能有一个。Intermediate CA可以有多个。Root CA通常不直接签发用户证书，而是签发Intermediate CA，由Intermediate CA来签发终用户书。它们之间的关系如下图所示：
 
 ![](https://img-blog.csdn.net/20170728125047197?watermark/2/text/aHR0cDovL2Jsb2cuY3Nkbi5uZXQvdTAxMTEzMDU3OA==/font/5a6L5L2T/fontsize/400/fill/I0JBQkFCMA==/dissolve/70/gravity/Center)
 
-    证书链就是Root CA签发二级Intermediate CA，二级Intermediate CA可以签发三级Intermediate CA，也可以直接签发用户证书。从Root CA到用户证书之间构成了一个信任链：信任Root CA，就应该信任它所信任的二级Intermediate CA，从而就应该信任三级Intermediate CA直至信任用户证书。
+&#x20;   证书链就是Root CA签发二级Intermediate CA，二级Intermediate CA可以签发三级Intermediate CA，也可以直接签发用户证书。从Root CA到用户证书之间构成了一个信任链：信任Root CA，就应该信任它所信任的二级Intermediate CA，从而就应该信任三级Intermediate CA直至信任用户证书。
 
-    客户的系统或浏览器上会默认安装多个知名的Root CA，在SSL Handshake过程中Server需要将证书链发送给Client（通常是浏览器），Client使用Root CA逐级对证书进行验证，直至验证Server的用户证书。
+&#x20;   客户的系统或浏览器上会默认安装多个知名的Root CA，在SSL Handshake过程中Server需要将证书链发送给Client（通常是浏览器），Client使用Root CA逐级对证书进行验证，直至验证Server的用户证书。
 
 ### 2.2 Load Certificate Chain
 
-SSL\_CTX\_add0\_chain\_cert\(\)和SSL\_CTX\_add1\_chain\_cert\(\)函数用来加载证书链:
+SSL\_CTX\_add0\_chain\_cert()和SSL\_CTX\_add1\_chain\_cert()函数用来加载证书链:
 
-```text
+```
 1345 # define SSL_CTX_add0_chain_cert(ctx,x509) \
 1346         SSL_CTX_ctrl(ctx,SSL_CTRL_CHAIN_CERT,0,(char *)(x509))
 1347 # define SSL_CTX_add1_chain_cert(ctx,x509) \
 1348         SSL_CTX_ctrl(ctx,SSL_CTRL_CHAIN_CERT,1,(char *)(x509))
 ```
 
-```text
+```
 2270 long SSL_CTX_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
 2271 {
 2272     long l;
@@ -139,9 +139,9 @@ SSL\_CTX\_add0\_chain\_cert\(\)和SSL\_CTX\_add1\_chain\_cert\(\)函数用来加
 2388 }
 ```
 
-ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
+ctx->method->ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl():
 
-```text
+```
 3763 long ssl3_ctx_ctrl(SSL_CTX *ctx, int cmd, long larg, void *parg)
 3764 {
 3765     switch (cmd) {      
@@ -154,7 +154,7 @@ ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
 ...
 ```
 
-```text
+```
  288 int ssl_cert_add0_chain_cert(SSL *s, SSL_CTX *ctx, X509 *x)
  289 {
  290     int r;
@@ -182,17 +182,17 @@ ctx-&gt;method-&gt;ssl\_ctx\_ctrl指向ssl3\_ctx\_ctrl\(\):
  312 }
 ```
 
-291: cpk指向ssl\_set\_cert\(\)中所设置的快捷方式;
+291: cpk指向ssl\_set\_cert()中所设置的快捷方式;
 
-294: 根据安全等级\(security level\)检查密钥强度等;
+294: 根据安全等级(security level)检查密钥强度等;
 
-301: 将证书加入到与之前的终端证书\(server用户证书\)相同的数组中。
+301: 将证书加入到与之前的终端证书(server用户证书)相同的数组中。
 
 ### 2.3 Server Certificate Chain
 
 SSL Server收到ClientHello后，需要构建Server Ceritificate来回应:
 
-```text
+```
 3774 int tls_construct_server_certificate(SSL *s, WPACKET *pkt)
 3775 {
 3776     CERT_PKEY *cpk = s->s3->tmp.cert;
@@ -221,9 +221,9 @@ SSL Server收到ClientHello后，需要构建Server Ceritificate来回应:
 3799 }
 ```
 
-ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息中:
+ssl3\_output\_cert\_chain()将证书链制放入到Server Ceritificate消息中:
 
-```text
+```
  998 unsigned long ssl3_output_cert_chain(SSL *s, WPACKET *pkt, CERT_PKEY *cpk)
  999 {
 1000     if (!WPACKET_start_sub_packet_u24(pkt)) {
@@ -245,7 +245,7 @@ ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息�
 1016 }   
 ```
 
-```text
+```
  901 /* Add certificate chain to provided WPACKET */
  902 static int ssl_add_cert_chain(SSL *s, WPACKET *pkt, CERT_PKEY *cpk)
  903 {
@@ -346,11 +346,13 @@ ssl3\_output\_cert\_chain\(\)将证书链制放入到Server Ceritificate消息�
 
 
 
-## 3. Certificate Chain制作  
+3\. Certificate Chain制作\
+&#x20;
+------
 
 证书链的制作脚本如下：
 
-```text
+```
 #!/bin/bash
 
 set -e
@@ -419,10 +421,9 @@ cat $cer $cacer $sub1_cacer |tee $param.pem
 echo "===================Gen All OK===================="
 ```
 
-    在Handshake过程中Server会按照$param.pem文件中的顺序发送证书链。Client在收到证书链的时候会先验证用户证书，但无法找到发行者\(Issuer\)，然后会遍历证书链找到Issuer，再找到Issuer的Issuer，直到能用Root CA进行验证，从而完成了整个证书链的验证。
+&#x20;   在Handshake过程中Server会按照$param.pem文件中的顺序发送证书链。Client在收到证书链的时候会先验证用户证书，但无法找到发行者(Issuer)，然后会遍历证书链找到Issuer，再找到Issuer的Issuer，直到能用Root CA进行验证，从而完成了整个证书链的验证。
 
-    【注1】：生成最后的证书（$param.pem）时一定要按照顺序先添加用户证书（$cer），再追加Intermediate CA证书（$cacer，$sub1\_cacer），否则在Server端（如：nginx）会载入失败，因为nginx会使用第一个证书与私钥进行匹配。  
+&#x20;   【注1】：生成最后的证书（$param.pem）时一定要按照顺序先添加用户证书（$cer），再追加Intermediate CA证书（$cacer，$sub1\_cacer），否则在Server端（如：nginx）会载入失败，因为nginx会使用第一个证书与私钥进行匹配。\
 
 
-     【注2】：如果Client用OpenSSL API验证Server的证书链，则需要通过SSL\_CTX\_set\_verify\_depth\(ctx, 3\)将验证深度设置为3（如果Root CA以下共有3级证书）。如果是Client是浏览器则只要安装了Root CA证书即可。
-
+&#x20;    【注2】：如果Client用OpenSSL API验证Server的证书链，则需要通过SSL\_CTX\_set\_verify\_depth(ctx, 3)将验证深度设置为3（如果Root CA以下共有3级证书）。如果是Client是浏览器则只要安装了Root CA证书即可。

@@ -264,6 +264,8 @@ tls1\_default\_timeout()定义：
 
 Client和Server可以使用Session ticket来恢复session, TLSv1.3可以使用NEW SESSION TICKET+PSK Extension来发送ticket, 其它版本则只能通过NEW SESSION TICKET消息来传递ticket.
 
+### 8.3.1 Server Send
+
 Session Ticket消息是由Server端在handshake完成之后发送的:
 
 ```c
@@ -406,54 +408,61 @@ Session Ticket消息是由Server端在handshake完成之后发送的:
 4033 }
 ```
 
+3909: 如果是TLSv1.3;
 
+3928-3937: 如果已经发送过ticket或者已经恢复了session, 则去掉当前session中的ticket信息;
 
-如果是TLSv1.3 client需要在ClientHello的Extension中写入session中的ticket:
+3940: 生成Session ID；
+
+3944-3949: 生成age信息;
+
+3951-3954: 填充Nonce, 作为当前连接的ticket唯一标识;
+
+3957-3967: 更新session master key;
+
+3969-3970: 重新计算超时时间;
+
+3971-3980: 设置ALPN;
+
+3982: 记录Early Data; TLSv1.3的处理结束;
+
+3985-3987: 调用callback函数;
+
+3995-3999: 如果是TLSv1.3并且设置了NO\_TICKET, 则构建stateful ticket(server端保存session信息用于resumption);
+
+4003-4015: 否则构建stateless ticket，让client保存session信息以减少server的负担;
+
+4019-4025: 如果是TLSv1.3则构建Early Data Extension，告诉对端Early Data的最大长度;
+
+4026: 更新ticket count;
+
+4027: 更新server session cache.
+
+如果TLSv1.2没有设置NO\_TICKET，server增加在Session Ticket Extension:
 
 ```c
- 254 EXT_RETURN tls_construct_ctos_session_ticket(SSL *s, WPACKET *pkt,          
- 255                                              unsigned int context, X509 *x, 
- 256                                              size_t chainidx)                                                                                                                                          
- 257 {
- 258     size_t ticklen;
- 259 
- 260     if (!tls_use_ticket(s))
- 261         return EXT_RETURN_NOT_SENT;                                                                                                                                                                    
- 262 
- 263     if (!s->new_session && s->session != NULL 
- 264             && s->session->ext.tick != NULL
- 265             && s->session->ssl_version != TLS1_3_VERSION) {
- 266         ticklen = s->session->ext.ticklen;
- 267     } else if (s->session && s->ext.session_ticket != NULL
- 268                && s->ext.session_ticket->data != NULL) {
- 269         ticklen = s->ext.session_ticket->length;
- 270         s->session->ext.tick = OPENSSL_malloc(ticklen);
- 271         if (s->session->ext.tick == NULL) {
- 272             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);                                                                                                                                  
- 273             return EXT_RETURN_FAIL;    
- 274         }
- 275         memcpy(s->session->ext.tick,          
- 276                s->ext.session_ticket->data, ticklen);
- 277         s->session->ext.ticklen = ticklen;
- 278     } else {
- 279         ticklen = 0;
- 280     }
- 281 
- 282     if (ticklen == 0 && s->ext.session_ticket != NULL &&
- 283             s->ext.session_ticket->data == NULL)
- 284         return EXT_RETURN_NOT_SENT;                                                                                                                                                                    
- 285 
- 286     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_session_ticket)
- 287             || !WPACKET_sub_memcpy_u16(pkt, s->session->ext.tick, ticklen)) {
- 288         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
- 289         return EXT_RETURN_FAIL;
- 290     }
- 291 
- 292     return EXT_RETURN_SENT;
- 293 }
+1387 EXT_RETURN tls_construct_stoc_session_ticket(SSL *s, WPACKET *pkt,
+1388                                              unsigned int context, X509 *x, 
+1389                                              size_t chainidx)               
+1390 {
+1391     if (!s->ext.ticket_expected || !tls_use_ticket(s)) {
+1392         s->ext.ticket_expected = 0;    
+1393         return EXT_RETURN_NOT_SENT;    
+1394     }
+1395 
+1396     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_session_ticket)
+1397             || !WPACKET_put_bytes_u16(pkt, 0)) {
+1398         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1399         return EXT_RETURN_FAIL; 
+1400     }
+1401 
+1402     return EXT_RETURN_SENT;
+1403 }
 ```
 
-如果session中有ticket，就需要将它写入到extension中。这个ticket是上次handshake结束后server发过来的.
+### 8.3.2 Client Recv
+
+Client收到Server发送的NEW SESSION TICKET消息:
 
 ```c
 2453 MSG_PROCESS_RETURN tls_process_new_session_ticket(SSL *s, PACKET *pkt)                                                                                                                                 
@@ -648,11 +657,58 @@ Session Ticket消息是由Server端在handshake完成之后发送的:
 
 2617: 更新client cache.
 
+如果是TLSv1.3 client需要在ClientHello的Extension中写入session中的ticket:
 
+```c
+ 254 EXT_RETURN tls_construct_ctos_session_ticket(SSL *s, WPACKET *pkt,          
+ 255                                              unsigned int context, X509 *x, 
+ 256                                              size_t chainidx)                                                                                                                                          
+ 257 {
+ 258     size_t ticklen;
+ 259 
+ 260     if (!tls_use_ticket(s))
+ 261         return EXT_RETURN_NOT_SENT;                                                                                                                                                                    
+ 262 
+ 263     if (!s->new_session && s->session != NULL 
+ 264             && s->session->ext.tick != NULL
+ 265             && s->session->ssl_version != TLS1_3_VERSION) {
+ 266         ticklen = s->session->ext.ticklen;
+ 267     } else if (s->session && s->ext.session_ticket != NULL
+ 268                && s->ext.session_ticket->data != NULL) {
+ 269         ticklen = s->ext.session_ticket->length;
+ 270         s->session->ext.tick = OPENSSL_malloc(ticklen);
+ 271         if (s->session->ext.tick == NULL) {
+ 272             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);                                                                                                                                  
+ 273             return EXT_RETURN_FAIL;    
+ 274         }
+ 275         memcpy(s->session->ext.tick,          
+ 276                s->ext.session_ticket->data, ticklen);
+ 277         s->session->ext.ticklen = ticklen;
+ 278     } else {
+ 279         ticklen = 0;
+ 280     }
+ 281 
+ 282     if (ticklen == 0 && s->ext.session_ticket != NULL &&
+ 283             s->ext.session_ticket->data == NULL)
+ 284         return EXT_RETURN_NOT_SENT;                                                                                                                                                                    
+ 285 
+ 286     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_session_ticket)
+ 287             || !WPACKET_sub_memcpy_u16(pkt, s->session->ext.tick, ticklen)) {
+ 288         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+ 289         return EXT_RETURN_FAIL;
+ 290     }
+ 291 
+ 292     return EXT_RETURN_SENT;
+ 293 }
+```
 
-## 8.4 Session Cache
+如果session中有ticket，就需要将它写入到extension中。这个ticket是上次handshake结束后server发过来的.
 
-## 8.5 Session Resumption
+## 8.4 Session ID
+
+## 8.5 Session Cache
+
+## 8.6 Session Resumption
 
 对于SSL Server来说，TLSv1.3只能用session ticket实现session resume; TLSv1.2及其以下版本则会优先选择ticket, 没有ticket时会使用session cache:
 

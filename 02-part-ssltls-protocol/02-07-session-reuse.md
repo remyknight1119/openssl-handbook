@@ -266,6 +266,146 @@ Client和Server可以使用Session ticket来恢复session, TLSv1.3可以使用NE
 
 Session Ticket消息是由Server端在handshake完成之后发送的:
 
+```c
+3897 int tls_construct_new_session_ticket(SSL *s, WPACKET *pkt)
+3898 {
+3899     SSL_CTX *tctx = s->session_ctx;
+3900     unsigned char tick_nonce[TICKET_NONCE_SIZE];
+3901     union {
+3902         unsigned char age_add_c[sizeof(uint32_t)];
+3903         uint32_t age_add;
+3904     } age_add_u;
+3905     int ret = 0;
+3906
+3907     age_add_u.age_add = 0;
+3908
+3909     if (SSL_IS_TLS13(s)) {
+3910         size_t i, hashlen;
+3911         uint64_t nonce;
+3912         static const unsigned char nonce_label[] = "resumption";
+3913         const EVP_MD *md = ssl_handshake_md(s);
+3914         int hashleni = EVP_MD_get_size(md);
+3915
+3916         /* Ensure cast to size_t is safe */
+3917         if (!ossl_assert(hashleni >= 0)) {
+3918             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+3919             goto err;
+3920         }
+3921         hashlen = (size_t)hashleni;
+3922
+3923         /*
+3924          * If we already sent one NewSessionTicket, or we resumed then
+3925          * s->session may already be in a cache and so we must not modify it.
+3926          * Instead we need to take a copy of it and modify that.
+3927          */
+3928         if (s->sent_tickets != 0 || s->hit) {
+3929             SSL_SESSION *new_sess = ssl_session_dup(s->session, 0);
+3930
+3931             if (new_sess == NULL) {
+3932                 /* SSLfatal already called */
+3933                 goto err;
+3934             }
+3935
+3936             SSL_SESSION_free(s->session);
+3937             s->session = new_sess;
+3938         }
+3939
+3940         if (!ssl_generate_session_id(s, s->session)) {
+3941             /* SSLfatal() already called */
+3942             goto err;
+3943         }
+3944         if (RAND_bytes_ex(s->ctx->libctx, age_add_u.age_add_c,
+3945                           sizeof(age_add_u), 0) <= 0) {
+3946             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+3947             goto err;
+3948         }
+3949         s->session->ext.tick_age_add = age_add_u.age_add;
+3950
+3951         nonce = s->next_ticket_nonce;
+3952         for (i = TICKET_NONCE_SIZE; i > 0; i--) {
+3953             tick_nonce[i - 1] = (unsigned char)(nonce & 0xff);
+3954             nonce >>= 8;
+3955         }
+3956
+3957         if (!tls13_hkdf_expand(s, md, s->resumption_master_secret,
+3958                                nonce_label,
+3959                                sizeof(nonce_label) - 1,
+3960                                tick_nonce,
+3961                                TICKET_NONCE_SIZE,
+3962                                s->session->master_key,
+3963                                hashlen, 1)) {
+3964             /* SSLfatal() already called */
+3965             goto err;
+3966         }
+3967         s->session->master_key_length = hashlen;
+3968
+3969         s->session->time = time(NULL);
+3970         ssl_session_calculate_timeout(s->session);
+3971         if (s->s3.alpn_selected != NULL) {
+3972             OPENSSL_free(s->session->ext.alpn_selected);
+3973             s->session->ext.alpn_selected =
+3974                 OPENSSL_memdup(s->s3.alpn_selected, s->s3.alpn_selected_len);
+3975             if (s->session->ext.alpn_selected == NULL) {
+3976                 s->session->ext.alpn_selected_len = 0;
+3977                 SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_MALLOC_FAILURE);
+3978                 goto err;
+3979             }
+3980             s->session->ext.alpn_selected_len = s->s3.alpn_selected_len;
+3981         }
+3982         s->session->ext.max_early_data = s->max_early_data;
+3983     }
+3984
+3985     if (tctx->generate_ticket_cb != NULL &&
+3986         tctx->generate_ticket_cb(s, tctx->ticket_cb_data) == 0) {
+3987         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+3988         goto err;
+3989     }
+3990     /*
+3991      * If we are using anti-replay protection then we behave as if
+3992      * SSL_OP_NO_TICKET is set - we are caching tickets anyway so there
+3993      * is no point in using full stateless tickets.
+3994      */
+3995     if (SSL_IS_TLS13(s)
+3996             && ((s->options & SSL_OP_NO_TICKET) != 0
+3997                 || (s->max_early_data > 0
+3998                     && (s->options & SSL_OP_NO_ANTI_REPLAY) == 0))) {
+3999         if (!construct_stateful_ticket(s, pkt, age_add_u.age_add, tick_nonce)) {
+4000             /* SSLfatal() already called */
+4001             goto err;
+4002         }
+4003     } else {
+4004         int tmpret;
+4005
+4006         tmpret = construct_stateless_ticket(s, pkt, age_add_u.age_add,
+4007                                             tick_nonce);
+4008         if (tmpret != 1) {
+4009             if (tmpret == 0) {
+4010                 ret = 2; /* Non-fatal. Abort construction but continue */
+4011                 /* We count this as a success so update the counts anwyay */
+4012                 tls_update_ticket_counts(s);
+4013             }
+4014             /* else SSLfatal() already called */
+4015             goto err;
+4016         }
+4017     }
+4018
+4019     if (SSL_IS_TLS13(s)) {
+4020         if (!tls_construct_extensions(s, pkt,
+4021                                       SSL_EXT_TLS1_3_NEW_SESSION_TICKET,
+4022                                       NULL, 0)) {
+4023             /* SSLfatal() already called */
+4024             goto err;
+4025         }
+4026         tls_update_ticket_counts(s);
+4027         ssl_update_cache(s, SSL_SESS_CACHE_SERVER);
+4028     }
+4029
+4030     ret = 1;
+4031  err:
+4032     return ret;
+4033 }
+```
+
 
 
 如果是TLSv1.3 client需要在ClientHello的Extension中写入session中的ticket:

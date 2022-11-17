@@ -57,7 +57,7 @@ TLS1.3 session reuse:
 
 Client使用session reuse的方法是把Session结构体保存下来，设置到下一次的SSL连接上。
 
-## 8.2 Session初始化
+## 8.2 Session Initialize
 
 ```c
 1093 int tls_construct_client_hello(SSL *s, WPACKET *pkt)

@@ -57,9 +57,7 @@ TLS1.3 session reuse:
 
 Client使用session reuse的方法是把Session结构体保存下来，设置到下一次的SSL连接上。
 
-## 8.2 Client Side
-
-### 8.2.1 Session初始化
+## 8.2 Session初始化
 
 ```c
 1093 int tls_construct_client_hello(SSL *s, WPACKET *pkt)
@@ -262,9 +260,15 @@ tls1\_default\_timeout()定义：
 
 可以看出session的默认timeout值是2 hours.
 
-### 8.2.2 Session Ticket
+## 8.3 Session Ticket
 
-如果使用session ticket, client需要在ClientHello的Extension中写入session中的ticket:
+Client和Server可以使用Session ticket来恢复session, TLSv1.3可以使用NEW SESSION TICKET+PSK Extension来发送ticket, 其它版本则只能通过NEW SESSION TICKET消息来传递ticket.
+
+Session Ticket消息是由Server端在handshake完成之后发送的:
+
+
+
+如果是TLSv1.3 client需要在ClientHello的Extension中写入session中的ticket:
 
 ```c
  254 EXT_RETURN tls_construct_ctos_session_ticket(SSL *s, WPACKET *pkt,          
@@ -504,7 +508,167 @@ tls1\_default\_timeout()定义：
 
 2617: 更新client cache.
 
-### 8.2.3 Client Cache
 
-## 8.3 Server Side
+
+## 8.4 Session Cache
+
+## 8.5 Session Resumption
+
+对于SSL Server来说，TLSv1.3只能用session ticket实现session resume; TLSv1.2及其以下版本则会优先选择ticket, 没有ticket时会使用session cache:
+
+```c
+ 546 /*-
+ 547  * ssl_get_prev attempts to find an SSL_SESSION to be used to resume this
+ 548  * connection. It is only called by servers.
+ 549  *
+ 550  *   hello: The parsed ClientHello data
+ 551  *
+ 552  * Returns:
+ 553  *   -1: fatal error
+ 554  *    0: no session found
+ 555  *    1: a session may have been found.
+ 556  *
+ 557  * Side effects:
+ 558  *   - If a session is found then s->session is pointed at it (after freeing an
+ 559  *     existing session if need be) and s->verify_result is set from the session.
+ 560  *   - Both for new and resumed sessions, s->ext.ticket_expected is set to 1
+ 561  *     if the server should issue a new session ticket (to 0 otherwise).
+ 562  */
+ 563 int ssl_get_prev_session(SSL *s, CLIENTHELLO_MSG *hello)
+ 564 {
+ 565     /* This is used only by servers. */
+ 566
+ 567     SSL_SESSION *ret = NULL;
+ 568     int fatal = 0;
+ 569     int try_session_cache = 0;
+ 570     SSL_TICKET_STATUS r;
+ 571
+ 572     if (SSL_IS_TLS13(s)) {
+ 573         /*
+ 574          * By default we will send a new ticket. This can be overridden in the
+ 575          * ticket processing.
+ 576          */
+ 577         s->ext.ticket_expected = 1;
+ 578         if (!tls_parse_extension(s, TLSEXT_IDX_psk_kex_modes,
+ 579                                  SSL_EXT_CLIENT_HELLO, hello->pre_proc_exts,
+ 580                                  NULL, 0)
+ 581                 || !tls_parse_extension(s, TLSEXT_IDX_psk, SSL_EXT_CLIENT_HELLO,
+ 582                                         hello->pre_proc_exts, NULL, 0))
+ 583             return -1;
+ 584
+ 585         ret = s->session;
+ 586     } else {
+ 587         /* sets s->ext.ticket_expected */
+ 588         r = tls_get_ticket_from_client(s, hello, &ret);
+ 589         switch (r) {
+ 590         case SSL_TICKET_FATAL_ERR_MALLOC:
+ 591         case SSL_TICKET_FATAL_ERR_OTHER:
+ 592             fatal = 1;
+ 593             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+ 594             goto err;
+ 595         case SSL_TICKET_NONE:
+ 596         case SSL_TICKET_EMPTY:
+ 597             if (hello->session_id_len > 0) {
+ 598                 try_session_cache = 1;
+ 599                 ret = lookup_sess_in_cache(s, hello->session_id,
+ 600                                            hello->session_id_len);
+ 601             }
+ 602             break;
+ 603         case SSL_TICKET_NO_DECRYPT:
+ 604         case SSL_TICKET_SUCCESS:
+ 605         case SSL_TICKET_SUCCESS_RENEW:
+ 606             break;
+ 607         }
+ 608     }
+ 609
+ 610     if (ret == NULL)
+ 611         goto err;
+ 612
+ 613     /* Now ret is non-NULL and we own one of its reference counts. */
+ 614
+ 615     /* Check TLS version consistency */
+ 616     if (ret->ssl_version != s->version)
+ 617         goto err;
+ 618
+ 619     if (ret->sid_ctx_length != s->sid_ctx_length
+ 620         || memcmp(ret->sid_ctx, s->sid_ctx, ret->sid_ctx_length)) {
+ 621         /*
+ 622          * We have the session requested by the client, but we don't want to
+ 623          * use it in this context.
+ 624          */
+ 625         goto err;               /* treat like cache miss */
+ 626     }
+ 627
+ 628     if ((s->verify_mode & SSL_VERIFY_PEER) && s->sid_ctx_length == 0) {
+ 629         /*
+ 630          * We can't be sure if this session is being used out of context,
+ 631          * which is especially important for SSL_VERIFY_PEER. The application
+ 632          * should have used SSL[_CTX]_set_session_id_context. For this error
+ 633          * case, we generate an error instead of treating the event like a
+ 634          * cache miss (otherwise it would be easy for applications to
+ 635          * effectively disable the session cache by accident without anyone
+ 636          * noticing).
+ 637          */
+ 638
+ 639         SSLfatal(s, SSL_AD_INTERNAL_ERROR,
+ 640                  SSL_R_SESSION_ID_CONTEXT_UNINITIALIZED);
+ 641         fatal = 1;
+ 642         goto err;
+ 643     }
+ 644
+ 645     if (sess_timedout(time(NULL), ret)) {
+ 646         ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_timeout);
+ 647         if (try_session_cache) {
+ 648             /* session was from the cache, so remove it */
+ 649             SSL_CTX_remove_session(s->session_ctx, ret);
+ 650         }
+ 651         goto err;
+ 652     }
+ 653
+ 654     /* Check extended master secret extension consistency */
+ 655     if (ret->flags & SSL_SESS_FLAG_EXTMS) {
+ 656         /* If old session includes extms, but new does not: abort handshake */
+ 657         if (!(s->s3.flags & TLS1_FLAGS_RECEIVED_EXTMS)) {
+ 658             SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_R_INCONSISTENT_EXTMS);
+ 659             fatal = 1;
+ 660             goto err;
+ 661         }
+ 662     } else if (s->s3.flags & TLS1_FLAGS_RECEIVED_EXTMS) {
+ 663         /* If new session includes extms, but old does not: do not resume */
+ 664         goto err;
+ 665     }
+ 666
+ 667     if (!SSL_IS_TLS13(s)) {
+ 668         /* We already did this for TLS1.3 */
+ 669         SSL_SESSION_free(s->session);
+ 670         s->session = ret;
+ 671     }
+ 672
+ 673     ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_hit);
+ 674     s->verify_result = s->session->verify_result;
+ 675     return 1;
+ 676
+ 677  err:
+ 678     if (ret != NULL) {
+ 679         SSL_SESSION_free(ret);
+ 680         /* In TLSv1.3 s->session was already set to ret, so we NULL it out */
+ 681         if (SSL_IS_TLS13(s))
+ 682             s->session = NULL;
+ 683
+ 684         if (!try_session_cache) {
+ 685             /*
+ 686              * The session was from a ticket, so we should issue a ticket for
+ 687              * the new session
+ 688              */
+ 689             s->ext.ticket_expected = 1;
+ 690         }
+ 691     }
+ 692     if (fatal)
+ 693         return -1;
+ 694
+ 695     return 0;
+ 696 }
+```
+
+572-585: TLSv1.3通过解析PSK Extension中的ticket来恢复session;
 

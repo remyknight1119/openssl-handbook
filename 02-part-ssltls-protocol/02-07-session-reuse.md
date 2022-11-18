@@ -1373,17 +1373,119 @@ Server在调用ssl\_get\_prev\_session()时会解析PSK Extension来恢复sessio
 1210 }
 ```
 
+1098-1101: 如果设置了NO\_TICKET或者Early Data抗重放，则使用stateful ticket(保存在Server端cache中的session结构);
+
+1102-1104: 解密stateless ticket恢复session;
+
+1195-1197: Verify binder;
+
+1204-1205: 用恢复的session替换当前的session.
+
+至此session resumption完成.
+
+## 8.4 Session Cache
+
+如果SSL设置了SSL\_OP\_NO\_TICKET, 或者TLSv1.3使用了Early Data+ANTI\_REPLAY, stateful ticket会被启用，实际上它是使用了Session cache. Session Cache分为Client Cache和Server Cache.
+
+### 8.4.1 Client Cache
+
+Client在收到NEW SESSION TICKET的时候会把session放在cache里:
+
+```c
+2453 MSG_PROCESS_RETURN tls_process_new_session_ticket(SSL *s, PACKET *pkt)
+2454 {
+...
+2591     if (SSL_IS_TLS13(s)) {
+...
+2617         ssl_update_cache(s, SSL_SESS_CACHE_CLIENT);
+
+```
+
+```c
+3714 void ssl_update_cache(SSL *s, int mode)
+3715 {
+3716     int i;
+3717 
+3718     /*
+3719      * If the session_id_length is 0, we are not supposed to cache it, and it
+3720      * would be rather hard to do anyway :-)
+3721      */
+3722     if (s->session->session_id_length == 0)
+3723         return;
+3724     
+3725     /*
+3726      * If sid_ctx_length is 0 there is no specific application context
+3727      * associated with this session, so when we try to resume it and
+3728      * SSL_VERIFY_PEER is requested to verify the client identity, we have no
+3729      * indication that this is actually a session for the proper application
+3730      * context, and the *handshake* will fail, not just the resumption attempt.
+3731      * Do not cache (on the server) these sessions that are not resumable
+3732      * (clients can set SSL_VERIFY_PEER without needing a sid_ctx set).
+3733      */
+3734     if (s->server && s->session->sid_ctx_length == 0
+3735             && (s->verify_mode & SSL_VERIFY_PEER) != 0)
+3736         return;
+3737 
+3738     i = s->session_ctx->session_cache_mode;
+3739     if ((i & mode) != 0
+3740         && (!s->hit || SSL_IS_TLS13(s))) {
+3741         /*
+3742          * Add the session to the internal cache. In server side TLSv1.3 we
+3743          * normally don't do this because by default it's a full stateless ticket
+3744          * with only a dummy session id so there is no reason to cache it,
+3745          * unless:
+3746          * - we are doing early_data, in which case we cache so that we can
+3747          *   detect replays
+3748          * - the application has set a remove_session_cb so needs to know about
+3749          *   session timeout events
+3750          * - SSL_OP_NO_TICKET is set in which case it is a stateful ticket
+3751          */
+3752         if ((i & SSL_SESS_CACHE_NO_INTERNAL_STORE) == 0
+3753                 && (!SSL_IS_TLS13(s)
+3754                     || !s->server
+3755                     || (s->max_early_data > 0
+3756                         && (s->options & SSL_OP_NO_ANTI_REPLAY) == 0)
+3757                     || s->session_ctx->remove_session_cb != NULL
+3758                     || (s->options & SSL_OP_NO_TICKET) != 0))
+3759             SSL_CTX_add_session(s->session_ctx, s->session);
+3760 
+3761         /*
+3762          * Add the session to the external cache. We do this even in server side
+3763          * TLSv1.3 without early data because some applications just want to
+3764          * know about the creation of a session and aren't doing a full cache.
+3765          */
+3766         if (s->session_ctx->new_session_cb != NULL) {
+3767             SSL_SESSION_up_ref(s->session);
+3768             if (!s->session_ctx->new_session_cb(s, s->session))
+3769                 SSL_SESSION_free(s->session);
+3770         }
+3771     }
+3772 
+3773     /* auto flush every 255 connections */
+3774     if ((!(i & SSL_SESS_CACHE_NO_AUTO_CLEAR)) && ((i & mode) == mode)) {
+3775         TSAN_QUALIFIER int *stat;
+3776 
+3777         if (mode & SSL_SESS_CACHE_CLIENT)
+3778             stat = &s->session_ctx->stats.sess_connect_good;
+3779         else
+3780             stat = &s->session_ctx->stats.sess_accept_good;
+3781         if ((ssl_tsan_load(s->session_ctx, stat) & 0xff) == 0xff)
+3782             SSL_CTX_flush_sessions(s->session_ctx, (unsigned long)time(NULL));
+3783     }
+3784 }
+```
+
+3739-3740: 如果client cache开启并且没有重用过session(s->hit == 0)或是TLSv1.3;
+
+3752-3759: 满足一系列条件后将session加入到s->session\_ctx队列中;
+
+3774-3782: 如果cache里面达到了255个session则删除timeout的缓存.
+
+## 8.5 Session Resumption Test
+
+### 8.5.1 TLSv1.3
 
 
-## 8.4 Session ID
 
-## 8.5 Session Cache
-
-## 8.6 Session Resumption Test
-
-### 8.6.1 TLSv1.3
-
-
-
-### 8.6.2 TLSv1.2
+### 8.5.2 TLSv1.2
 

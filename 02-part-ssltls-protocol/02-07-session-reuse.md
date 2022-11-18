@@ -1387,7 +1387,163 @@ Server在调用ssl\_get\_prev\_session()时会解析PSK Extension来恢复sessio
 
 如果SSL设置了SSL\_OP\_NO\_TICKET, 或者TLSv1.3使用了Early Data+ANTI\_REPLAY, stateful ticket会被启用，实际上它是使用了Session cache. Session Cache分为Client Cache和Server Cache.
 
-### 8.4.1 Client Cache
+### 8.4.1 Add Session Into Cache
+
+将session添加到cache是通过SSL\_CTX\_add\_session()函数实现的:
+
+```c
+ 698 int SSL_CTX_add_session(SSL_CTX *ctx, SSL_SESSION *c)
+ 699 {
+ 700     int ret = 0;
+ 701     SSL_SESSION *s;
+ 702 
+ 703     /*
+ 704      * add just 1 reference count for the SSL_CTX's session cache even though
+ 705      * it has two ways of access: each session is in a doubly linked list and
+ 706      * an lhash
+ 707      */
+ 708     SSL_SESSION_up_ref(c);
+ 709     /*
+ 710      * if session c is in already in cache, we take back the increment later
+ 711      */
+ 712 
+ 713     if (!CRYPTO_THREAD_write_lock(ctx->lock)) {
+ 714         SSL_SESSION_free(c);
+ 715         return 0;        
+ 716     }
+ 717     s = lh_SSL_SESSION_insert(ctx->sessions, c);                                                                                                                                                       
+ 718 
+ 719     /*
+ 720      * s != NULL iff we already had a session with the given PID. In this
+ 721      * case, s == c should hold (then we did not really modify
+ 722      * ctx->sessions), or we're in trouble.                                                                                                                                                            
+ 723      */
+ 724     if (s != NULL && s != c) {
+ 725         /* We *are* in trouble ... */  
+ 726         SSL_SESSION_list_remove(ctx, s);
+ 727         SSL_SESSION_free(s);
+ 728         /*
+ 729          * ... so pretend the other session did not exist in cache (we cannot
+ 730          * handle two SSL_SESSION structures with identical session ID in the
+ 731          * same cache, which could happen e.g. when two threads concurrently
+ 732          * obtain the same session from an external cache)
+ 733          */
+ 734         s = NULL;
+ 735     } else if (s == NULL &&
+ 736                lh_SSL_SESSION_retrieve(ctx->sessions, c) == NULL) {
+ 737         /* s == NULL can also mean OOM error in lh_SSL_SESSION_insert ... */
+ 738 
+ 739         /*
+ 740          * ... so take back the extra reference and also don't add
+ 741          * the session to the SSL_SESSION_list at this time
+ 742          */
+ 743         s = c;
+ 744     }
+ 745 
+ 746     /* Adjust last used time, and add back into the cache at the appropriate spot */
+ 747     if (ctx->session_cache_mode & SSL_SESS_CACHE_UPDATE_TIME) {
+ 748         c->time = time(NULL);
+ 749         ssl_session_calculate_timeout(c);
+ 750     }
+ 751 
+ 752     if (s == NULL) {
+ 753         /*
+ 754          * new cache entry -- remove old ones if cache has become too large
+ 755          * delete cache entry *before* add, so we don't remove the one we're adding!
+ 756          */
+ 757 
+ 758         ret = 1;
+ 759 
+ 760         if (SSL_CTX_sess_get_cache_size(ctx) > 0) {
+ 761             while (SSL_CTX_sess_number(ctx) >= SSL_CTX_sess_get_cache_size(ctx)) {
+ 762                 if (!remove_session_lock(ctx, ctx->session_cache_tail, 0))
+ 763                     break;
+ 764                 else
+ 765                     ssl_tsan_counter(ctx, &ctx->stats.sess_cache_full);
+ 766             }
+ 767         }
+ 768     }
+ 769 
+ 770     SSL_SESSION_list_add(ctx, c);
+ 771 
+ 772     if (s != NULL) {
+ 773         /*
+ 774          * existing cache entry -- decrement previously incremented reference
+ 775          * count because it already takes into account the cache
+ 776          */
+ 777 
+ 778         SSL_SESSION_free(s);    /* s == c */
+ 779         ret = 0;
+ 780     }
+ 781     CRYPTO_THREAD_unlock(ctx->lock);
+ 782     return ret;
+ 783 }
+```
+
+717: 将session插入到hash表中;
+
+724-734: 如果发现有相同ID的session已经在了，则删除这个session;
+
+747-750: 如果设置了SSL\_SESS\_CACHE\_UPDATE\_TIME则更新session时间;
+
+752-768: 如果是新的cache entry则检查session数量是否超出cache size的限制(默认是SSL\_SESSION\_CACHE\_MAX\_SIZE\_DEFAULT，1024\*20), 如果超出则删除最近就要超时的session(tail);
+
+770: 将session加入到cache队列.
+
+SSL\_SESSION\_list\_add()按照超时时间由远及近排序，将session放入双向链表中:
+
+```c
+1229 static void SSL_SESSION_list_add(SSL_CTX *ctx, SSL_SESSION *s)
+1230 {
+1231     SSL_SESSION *next;
+1232 
+1233     if ((s->next != NULL) && (s->prev != NULL))
+1234         SSL_SESSION_list_remove(ctx, s);
+1235 
+1236     if (ctx->session_cache_head == NULL) {
+1237         ctx->session_cache_head = s;
+1238         ctx->session_cache_tail = s;
+1239         s->prev = (SSL_SESSION *)&(ctx->session_cache_head);
+1240         s->next = (SSL_SESSION *)&(ctx->session_cache_tail);
+1241     } else {
+1242         if (timeoutcmp(s, ctx->session_cache_head) >= 0) {
+1243             /*
+1244              * if we timeout after (or the same time as) the first
+1245              * session, put us first - usual case
+1246              */
+1247             s->next = ctx->session_cache_head;
+1248             s->next->prev = s;
+1249             s->prev = (SSL_SESSION *)&(ctx->session_cache_head);
+1250             ctx->session_cache_head = s;
+1251         } else if (timeoutcmp(s, ctx->session_cache_tail) < 0) {
+1252             /* if we timeout before the last session, put us last */
+1253             s->prev = ctx->session_cache_tail;
+1254             s->prev->next = s;
+1255             s->next = (SSL_SESSION *)&(ctx->session_cache_tail);
+1256             ctx->session_cache_tail = s;
+1257         } else {
+1258             /*
+1259              * we timeout somewhere in-between - if there is only
+1260              * one session in the cache it will be caught above
+1261              */
+1262             next = ctx->session_cache_head->next;
+1263             while (next != (SSL_SESSION*)&(ctx->session_cache_tail)) {
+1264                 if (timeoutcmp(s, next) >= 0) {
+1265                     s->next = next;
+1266                     s->prev = next->prev;
+1267                     next->prev->next = s;
+1268                     next->prev = s;
+1269                     break;
+1270                 }
+1271                 next = next->next;
+1272             }
+1273         }
+1274     }
+1275     s->owner = ctx;
+1276 }
+```
+
+### 8.4.2 Client Cache
 
 Client在收到NEW SESSION TICKET的时候会把session放在cache里:
 
@@ -1481,11 +1637,168 @@ Client在收到NEW SESSION TICKET的时候会把session放在cache里:
 
 3774-3782: 如果cache里面达到了255个session则删除timeout的缓存.
 
+Client可以使用SSL\_CTX\_add\_session(), SSL\_CTX\_remove\_session()等API对cache进行管理. 如果设置了SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则需要调用SSL\_CTX\_sess\_set\_new\_cb(), SSL\_CTX\_sess\_set\_get\_cb()等函数注册callback，将session保存在本地的数据结构中.
+
+### 8.4.3 Server Cache
+
+在finish handshake时，TLSv1.2 server会将session放入cache中:
+
+```c
+1041 WORK_STATE tls_finish_handshake(SSL *s, ossl_unused WORK_STATE wst,
+1042                                 int clearbufs, int stop)
+1043 {
+...
+1091         if (s->server) {
+1092             /*
+1093              * In TLSv1.3 we update the cache as part of constructing the
+1094              * NewSessionTicket
+1095              */
+1096             if (!SSL_IS_TLS13(s))
+1097                 ssl_update_cache(s, SSL_SESS_CACHE_SERVER);
+1098 
+1099             /* N.B. s->ctx may not equal s->session_ctx */
+1100             ssl_tsan_counter(s->ctx, &s->ctx->stats.sess_accept_good);
+1101             s->handshake_func = ossl_statem_accept;
+1102         } else {
+1103             if (SSL_IS_TLS13(s)) {
+1104                 /*
+1105                  * We encourage applications to only use TLSv1.3 tickets once,
+1106                  * so we remove this one from the cache.
+1107                  */
+1108                 if ((s->session_ctx->session_cache_mode
+1109                      & SSL_SESS_CACHE_CLIENT) != 0)
+1110                     SSL_CTX_remove_session(s->session_ctx, s->session);
+1111             } else {
+1112                 /*
+1113                  * In TLSv1.3 we update the cache as part of processing the
+1114                  * NewSessionTicket
+1115                  */
+1116                 ssl_update_cache(s, SSL_SESS_CACHE_CLIENT);
+1117             }
+...
+```
+
+1091-1101: 如果server不是TLSv1.3，则更新cache;
+
+1102-1111: 如果client是TLSv1.3, 则将session移出client cache;
+
+1111-1117: 如果client不是TLSv1.3, 将session加入client cache(如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE).
+
+在恢复session时, server会调用tls\_get\_stateful\_ticket()来查找cache:
+
+```c
+ 949 static SSL_TICKET_STATUS tls_get_stateful_ticket(SSL *s, PACKET *tick,
+ 950                                                  SSL_SESSION **sess)
+ 951 {
+ 952     SSL_SESSION *tmpsess = NULL;
+ 953 
+ 954     s->ext.ticket_expected = 1;
+ 955 
+ 956     switch (PACKET_remaining(tick)) {
+ 957         case 0:
+ 958             return SSL_TICKET_EMPTY;
+ 959 
+ 960         case SSL_MAX_SSL_SESSION_ID_LENGTH:
+ 961             break;
+ 962 
+ 963         default:
+ 964             return SSL_TICKET_NO_DECRYPT;
+ 965     }
+ 966 
+ 967     tmpsess = lookup_sess_in_cache(s, PACKET_data(tick),
+ 968                                    SSL_MAX_SSL_SESSION_ID_LENGTH);
+ 969 
+ 970     if (tmpsess == NULL)
+ 971         return SSL_TICKET_NO_DECRYPT;
+ 972 
+ 973     *sess = tmpsess;
+ 974     return SSL_TICKET_SUCCESS;
+ 975 }
+```
+
+```c
+ 480 SSL_SESSION *lookup_sess_in_cache(SSL *s, const unsigned char *sess_id,
+ 481                                   size_t sess_id_len)
+ 482 {
+ 483     SSL_SESSION *ret = NULL;
+ 484 
+ 485     if ((s->session_ctx->session_cache_mode
+ 486          & SSL_SESS_CACHE_NO_INTERNAL_LOOKUP) == 0) {
+ 487         SSL_SESSION data;
+ 488 
+ 489         data.ssl_version = s->version;
+ 490         if (!ossl_assert(sess_id_len <= SSL_MAX_SSL_SESSION_ID_LENGTH))
+ 491             return NULL;
+ 492 
+ 493         memcpy(data.session_id, sess_id, sess_id_len);
+ 494         data.session_id_length = sess_id_len;
+ 495 
+ 496         if (!CRYPTO_THREAD_read_lock(s->session_ctx->lock))
+ 497             return NULL;
+ 498         ret = lh_SSL_SESSION_retrieve(s->session_ctx->sessions, &data);
+ 499         if (ret != NULL) {
+ 500             /* don't allow other threads to steal it: */
+ 501             SSL_SESSION_up_ref(ret);
+ 502         }
+ 503         CRYPTO_THREAD_unlock(s->session_ctx->lock);
+ 504         if (ret == NULL)
+ 505             ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_miss);
+ 506     }
+ 507 
+ 508     if (ret == NULL && s->session_ctx->get_session_cb != NULL) {
+ 509         int copy = 1;
+ 510 
+ 511         ret = s->session_ctx->get_session_cb(s, sess_id, sess_id_len, &copy);
+ 512 
+ 513         if (ret != NULL) {
+ 514             ssl_tsan_counter(s->session_ctx,
+ 515                              &s->session_ctx->stats.sess_cb_hit);
+ 516 
+ 517             /*
+ 518              * Increment reference count now if the session callback asks us
+ 519              * to do so (note that if the session structures returned by the
+ 520              * callback are shared between threads, it must handle the
+ 521              * reference count itself [i.e. copy == 0], or things won't be
+ 522              * thread-safe).
+ 523              */
+ 524             if (copy)
+ 525                 SSL_SESSION_up_ref(ret);
+ 526 
+ 527             /*
+ 528              * Add the externally cached session to the internal cache as
+ 529              * well if and only if we are supposed to.
+ 530              */
+ 531             if ((s->session_ctx->session_cache_mode &
+ 532                  SSL_SESS_CACHE_NO_INTERNAL_STORE) == 0) {
+ 533                 /*
+ 534                  * Either return value of SSL_CTX_add_session should not
+ 535                  * interrupt the session resumption process. The return
+ 536                  * value is intentionally ignored.
+ 537                  */
+ 538                 (void)SSL_CTX_add_session(s->session_ctx, ret);
+ 539             }
+ 540         }
+ 541     }
+ 542 
+ 543     return ret;
+ 544 }
+```
+
+485-505: 如果启用了cache模式并且没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_LOOKUP, 则使用session ID在cache中查找session;
+
+508-511: 如果没有查到session并且设置了get\_session的callback, 则调用callback查找session;
+
+513-538: 如果callback查到了，且开启了cache又没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE, 则将session添加到cache中.
+
+### 8.4.4 Summary
+
+
+
 ## 8.5 Session Resumption Test
 
-### 8.5.1 TLSv1.3
+### 8.5.1 TLSv1.2
 
 
 
-### 8.5.2 TLSv1.2
+### 8.5.2 TLSv1.3
 

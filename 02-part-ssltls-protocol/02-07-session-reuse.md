@@ -440,7 +440,7 @@ Session Ticket消息是由Server端在handshake完成之后发送的:
 
 4027: 更新server session cache.
 
-### 8.3.2 Ticket Recive
+### 8.3.2 Ticket Receive
 
 Client收到Server发送的NEW SESSION TICKET消息:
 
@@ -893,34 +893,220 @@ Server在处理ClientHello的时候会调用ssl\_get\_prev\_session()来恢复se
 
 #### 8.3.3.2 TLSv1.3
 
-
-
-## 8.4 Session ID
-
-## 8.5 Session Cache
-
-## 8.6 Session Resumption
-
-对于SSL Server来说，TLSv1.3只能用session ticket实现session resume; TLSv1.2及其以下版本则会优先选择ticket, 没有ticket时会使用session cache:
+在TLSv1.3中ClientHello使用PSK Extension来发送ticket:
 
 ```c
- 546 /*-
- 547  * ssl_get_prev attempts to find an SSL_SESSION to be used to resume this
- 548  * connection. It is only called by servers.
- 549  *
- 550  *   hello: The parsed ClientHello data
- 551  *
- 552  * Returns:
- 553  *   -1: fatal error
- 554  *    0: no session found
- 555  *    1: a session may have been found.
- 556  *
- 557  * Side effects:
- 558  *   - If a session is found then s->session is pointed at it (after freeing an
- 559  *     existing session if need be) and s->verify_result is set from the session.
- 560  *   - Both for new and resumed sessions, s->ext.ticket_expected is set to 1
- 561  *     if the server should issue a new session ticket (to 0 otherwise).
- 562  */
+ 973 EXT_RETURN tls_construct_ctos_psk(SSL *s, WPACKET *pkt, unsigned int context,
+ 974                                   X509 *x, size_t chainidx)
+ 975 {
+ 976 #ifndef OPENSSL_NO_TLS1_3
+ 977     uint32_t agesec, agems = 0;
+ 978     size_t reshashsize = 0, pskhashsize = 0, binderoffset, msglen;
+ 979     unsigned char *resbinder = NULL, *pskbinder = NULL, *msgstart = NULL;
+ 980     const EVP_MD *handmd = NULL, *mdres = NULL, *mdpsk = NULL;
+ 981     int dores = 0;
+ 982
+ 983     s->ext.tick_identity = 0;
+ 984
+ 985     /*
+ 986      * Note: At this stage of the code we only support adding a single
+ 987      * resumption PSK. If we add support for multiple PSKs then the length
+ 988      * calculations in the padding extension will need to be adjusted.
+ 989      */
+ 990
+ 991     /*
+ 992      * If this is an incompatible or new session then we have nothing to resume
+ 993      * so don't add this extension.
+ 994      */
+ 995     if (s->session->ssl_version != TLS1_3_VERSION
+ 996             || (s->session->ext.ticklen == 0 && s->psksession == NULL))
+ 997         return EXT_RETURN_NOT_SENT;
+ 998
+ 999     if (s->hello_retry_request == SSL_HRR_PENDING)
+1000         handmd = ssl_handshake_md(s);
+1001
+1002     if (s->session->ext.ticklen != 0) {
+1003         /* Get the digest associated with the ciphersuite in the session */
+1004         if (s->session->cipher == NULL) {
+1005             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1006             return EXT_RETURN_FAIL;
+1007         }
+1008         mdres = ssl_md(s->ctx, s->session->cipher->algorithm2);
+1009         if (mdres == NULL) {
+1010             /*
+1011              * Don't recognize this cipher so we can't use the session.
+1012              * Ignore it
+1013              */
+1014             goto dopsksess;
+1015         }
+1016
+1017         if (s->hello_retry_request == SSL_HRR_PENDING && mdres != handmd) {
+1018             /*
+1019              * Selected ciphersuite hash does not match the hash for the session
+1020              * so we can't use it.
+1021              */
+1022             goto dopsksess;
+1023         }
+1024
+1025         /*
+1026          * Technically the C standard just says time() returns a time_t and says
+1027          * nothing about the encoding of that type. In practice most
+1028          * implementations follow POSIX which holds it as an integral type in
+1029          * seconds since epoch. We've already made the assumption that we can do
+1030          * this in multiple places in the code, so portability shouldn't be an
+1031          * issue.
+1032          */
+1033         agesec = (uint32_t)(time(NULL) - s->session->time);
+1034         /*
+1035          * We calculate the age in seconds but the server may work in ms. Due to
+1036          * rounding errors we could overestimate the age by up to 1s. It is
+1037          * better to underestimate it. Otherwise, if the RTT is very short, when
+1038          * the server calculates the age reported by the client it could be
+1039          * bigger than the age calculated on the server - which should never
+1040          * happen.
+1041          */
+1042         if (agesec > 0)
+1043             agesec--;
+1044
+1045         if (s->session->ext.tick_lifetime_hint < agesec) {
+1046             /* Ticket is too old. Ignore it. */
+1047             goto dopsksess;
+1048         }
+1049
+1050         /*
+1051          * Calculate age in ms. We're just doing it to nearest second. Should be
+1052          * good enough.
+1053          */
+1054         agems = agesec * (uint32_t)1000;
+1055
+1056         if (agesec != 0 && agems / (uint32_t)1000 != agesec) {
+1057             /*
+1058              * Overflow. Shouldn't happen unless this is a *really* old session.
+1059              * If so we just ignore it.
+1060              */
+1061             goto dopsksess;
+1062         }
+1063
+1064         /*
+1065          * Obfuscate the age. Overflow here is fine, this addition is supposed
+1066          * to be mod 2^32.
+1067          */
+1068         agems += s->session->ext.tick_age_add;
+1069
+1070         reshashsize = EVP_MD_get_size(mdres);
+1071         s->ext.tick_identity++;
+1072         dores = 1;
+1073     }
+1074
+1075  dopsksess:
+1076     if (!dores && s->psksession == NULL)
+1077         return EXT_RETURN_NOT_SENT;
+1078
+1079     if (s->psksession != NULL) {
+1080         mdpsk = ssl_md(s->ctx, s->psksession->cipher->algorithm2);
+1081         if (mdpsk == NULL) {
+1082             /*
+1083              * Don't recognize this cipher so we can't use the session.
+1084              * If this happens it's an application bug.
+1085              */
+1086             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_R_BAD_PSK);
+1087             return EXT_RETURN_FAIL;
+1088         }
+1089
+1090         if (s->hello_retry_request == SSL_HRR_PENDING && mdpsk != handmd) {
+1091             /*
+1092              * Selected ciphersuite hash does not match the hash for the PSK
+1093              * session. This is an application bug.
+1094              */
+1095             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_R_BAD_PSK);
+1096             return EXT_RETURN_FAIL;
+1097         }
+1098
+1099         pskhashsize = EVP_MD_get_size(mdpsk);
+1100     }
+1101
+1102     /* Create the extension, but skip over the binder for now */
+1103     if (!WPACKET_put_bytes_u16(pkt, TLSEXT_TYPE_psk)
+1104             || !WPACKET_start_sub_packet_u16(pkt)
+1105             || !WPACKET_start_sub_packet_u16(pkt)) {
+1106         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1107         return EXT_RETURN_FAIL;
+1108     }
+1109
+1110     if (dores) {
+1111         if (!WPACKET_sub_memcpy_u16(pkt, s->session->ext.tick,
+1112                                            s->session->ext.ticklen)
+1113                 || !WPACKET_put_bytes_u32(pkt, agems)) {
+1114             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1115             return EXT_RETURN_FAIL;
+1116         }
+1117     }
+1118
+1119     if (s->psksession != NULL) {
+1120         if (!WPACKET_sub_memcpy_u16(pkt, s->psksession_id,
+1121                                     s->psksession_id_len)
+1122                 || !WPACKET_put_bytes_u32(pkt, 0)) {
+1123             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1124             return EXT_RETURN_FAIL;
+1125         }
+1126         s->ext.tick_identity++;
+1127     }
+1128
+1129     if (!WPACKET_close(pkt)
+1130             || !WPACKET_get_total_written(pkt, &binderoffset)
+1131             || !WPACKET_start_sub_packet_u16(pkt)
+1132             || (dores
+1133                 && !WPACKET_sub_allocate_bytes_u8(pkt, reshashsize, &resbinder))
+1134             || (s->psksession != NULL
+1135                 && !WPACKET_sub_allocate_bytes_u8(pkt, pskhashsize, &pskbinder))
+1136             || !WPACKET_close(pkt)
+1137             || !WPACKET_close(pkt)
+1138             || !WPACKET_get_total_written(pkt, &msglen)
+1139                /*
+1140                 * We need to fill in all the sub-packet lengths now so we can
+1141                 * calculate the HMAC of the message up to the binders
+1142                 */
+1143             || !WPACKET_fill_lengths(pkt)) {
+1144         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1145         return EXT_RETURN_FAIL;
+1146     }
+1147
+1148     msgstart = WPACKET_get_curr(pkt) - msglen;
+1149
+1150     if (dores
+1151             && tls_psk_do_binder(s, mdres, msgstart, binderoffset, NULL,
+1152                                  resbinder, s->session, 1, 0) != 1) {
+1153         /* SSLfatal() already called */
+1154         return EXT_RETURN_FAIL;
+1155     }
+1156
+1157     if (s->psksession != NULL
+1158             && tls_psk_do_binder(s, mdpsk, msgstart, binderoffset, NULL,
+1159                                  pskbinder, s->psksession, 1, 1) != 1) {
+1160         /* SSLfatal() already called */
+1161         return EXT_RETURN_FAIL;
+1162     }
+1163
+1164     return EXT_RETURN_SENT;
+1165 #else
+1166     return EXT_RETURN_NOT_SENT;
+1167 #endif
+1168 }
+```
+
+1003-1072: 检查当前的ticket, 如果超时则忽略它;
+
+1103-1105: 写入PSK Extension头;
+
+1110-1113: 如果有ticket则写入;
+
+1129-1143: 写入PSK Extension其它部分并预留出binder的空间. Binder被server用来认证ticket;
+
+1150-1159: 生成binder.
+
+Server在调用ssl\_get\_prev\_session()时会解析PSK Extension来恢复session:
+
+```c
  563 int ssl_get_prev_session(SSL *s, CLIENTHELLO_MSG *hello)
  564 {
  565     /* This is used only by servers. */
@@ -945,117 +1131,259 @@ Server在处理ClientHello的时候会调用ssl\_get\_prev\_session()来恢复se
  584
  585         ret = s->session;
  586     } else {
- 587         /* sets s->ext.ticket_expected */
- 588         r = tls_get_ticket_from_client(s, hello, &ret);
- 589         switch (r) {
- 590         case SSL_TICKET_FATAL_ERR_MALLOC:
- 591         case SSL_TICKET_FATAL_ERR_OTHER:
- 592             fatal = 1;
- 593             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
- 594             goto err;
- 595         case SSL_TICKET_NONE:
- 596         case SSL_TICKET_EMPTY:
- 597             if (hello->session_id_len > 0) {
- 598                 try_session_cache = 1;
- 599                 ret = lookup_sess_in_cache(s, hello->session_id,
- 600                                            hello->session_id_len);
- 601             }
- 602             break;
- 603         case SSL_TICKET_NO_DECRYPT:
- 604         case SSL_TICKET_SUCCESS:
- 605         case SSL_TICKET_SUCCESS_RENEW:
- 606             break;
- 607         }
- 608     }
- 609
- 610     if (ret == NULL)
- 611         goto err;
- 612
- 613     /* Now ret is non-NULL and we own one of its reference counts. */
- 614
- 615     /* Check TLS version consistency */
- 616     if (ret->ssl_version != s->version)
- 617         goto err;
- 618
- 619     if (ret->sid_ctx_length != s->sid_ctx_length
- 620         || memcmp(ret->sid_ctx, s->sid_ctx, ret->sid_ctx_length)) {
- 621         /*
- 622          * We have the session requested by the client, but we don't want to
- 623          * use it in this context.
- 624          */
- 625         goto err;               /* treat like cache miss */
- 626     }
- 627
- 628     if ((s->verify_mode & SSL_VERIFY_PEER) && s->sid_ctx_length == 0) {
- 629         /*
- 630          * We can't be sure if this session is being used out of context,
- 631          * which is especially important for SSL_VERIFY_PEER. The application
- 632          * should have used SSL[_CTX]_set_session_id_context. For this error
- 633          * case, we generate an error instead of treating the event like a
- 634          * cache miss (otherwise it would be easy for applications to
- 635          * effectively disable the session cache by accident without anyone
- 636          * noticing).
- 637          */
- 638
- 639         SSLfatal(s, SSL_AD_INTERNAL_ERROR,
- 640                  SSL_R_SESSION_ID_CONTEXT_UNINITIALIZED);
- 641         fatal = 1;
- 642         goto err;
- 643     }
- 644
- 645     if (sess_timedout(time(NULL), ret)) {
- 646         ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_timeout);
- 647         if (try_session_cache) {
- 648             /* session was from the cache, so remove it */
- 649             SSL_CTX_remove_session(s->session_ctx, ret);
- 650         }
- 651         goto err;
- 652     }
- 653
- 654     /* Check extended master secret extension consistency */
- 655     if (ret->flags & SSL_SESS_FLAG_EXTMS) {
- 656         /* If old session includes extms, but new does not: abort handshake */
- 657         if (!(s->s3.flags & TLS1_FLAGS_RECEIVED_EXTMS)) {
- 658             SSLfatal(s, SSL_AD_ILLEGAL_PARAMETER, SSL_R_INCONSISTENT_EXTMS);
- 659             fatal = 1;
- 660             goto err;
- 661         }
- 662     } else if (s->s3.flags & TLS1_FLAGS_RECEIVED_EXTMS) {
- 663         /* If new session includes extms, but old does not: do not resume */
- 664         goto err;
- 665     }
- 666
- 667     if (!SSL_IS_TLS13(s)) {
- 668         /* We already did this for TLS1.3 */
- 669         SSL_SESSION_free(s->session);
- 670         s->session = ret;
- 671     }
- 672
- 673     ssl_tsan_counter(s->session_ctx, &s->session_ctx->stats.sess_hit);
- 674     s->verify_result = s->session->verify_result;
- 675     return 1;
- 676
- 677  err:
- 678     if (ret != NULL) {
- 679         SSL_SESSION_free(ret);
- 680         /* In TLSv1.3 s->session was already set to ret, so we NULL it out */
- 681         if (SSL_IS_TLS13(s))
- 682             s->session = NULL;
- 683
- 684         if (!try_session_cache) {
- 685             /*
- 686              * The session was from a ticket, so we should issue a ticket for
- 687              * the new session
- 688              */
- 689             s->ext.ticket_expected = 1;
- 690         }
- 691     }
- 692     if (fatal)
- 693         return -1;
- 694
- 695     return 0;
- 696 }
+ ...
 ```
 
-572-585: TLSv1.3通过解析PSK Extension中的ticket来恢复session;
+解析PSK Extension:
+
+```c
+ 977 int tls_parse_ctos_psk(SSL *s, PACKET *pkt, unsigned int context, X509 *x,
+ 978                        size_t chainidx)
+ 979 {
+ 980     PACKET identities, binders, binder;
+ 981     size_t binderoffset, hashsize;
+ 982     SSL_SESSION *sess = NULL;
+ 983     unsigned int id, i, ext = 0;
+ 984     const EVP_MD *md = NULL;
+ 985
+ 986     /*
+ 987      * If we have no PSK kex mode that we recognise then we can't resume so
+ 988      * ignore this extension
+ 989      */
+ 990     if ((s->ext.psk_kex_mode
+ 991             & (TLSEXT_KEX_MODE_FLAG_KE | TLSEXT_KEX_MODE_FLAG_KE_DHE)) == 0)
+ 992         return 1;
+ 993
+ 994     if (!PACKET_get_length_prefixed_2(pkt, &identities)) {
+ 995         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+ 996         return 0;
+ 997     }
+ 998
+ 999     s->ext.ticket_expected = 0;
+1000     for (id = 0; PACKET_remaining(&identities) != 0; id++) {
+1001         PACKET identity;
+1002         unsigned long ticket_agel;
+1003         size_t idlen;
+1004
+1005         if (!PACKET_get_length_prefixed_2(&identities, &identity)
+1006                 || !PACKET_get_net_4(&identities, &ticket_agel)) {
+1007             SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+1008             return 0;
+1009         }
+1010
+1011         idlen = PACKET_remaining(&identity);
+1012         if (s->psk_find_session_cb != NULL
+1013                 && !s->psk_find_session_cb(s, PACKET_data(&identity), idlen,
+1014                                            &sess)) {
+1015             SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_R_BAD_EXTENSION);
+1016             return 0;
+1017         }
+1018
+1019 #ifndef OPENSSL_NO_PSK
+1020         if(sess == NULL
+1021                 && s->psk_server_callback != NULL
+1022                 && idlen <= PSK_MAX_IDENTITY_LEN) {
+1023             char *pskid = NULL;
+1024             unsigned char pskdata[PSK_MAX_PSK_LEN];
+1025             unsigned int pskdatalen;
+1026
+1027             if (!PACKET_strndup(&identity, &pskid)) {
+1028                 SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1029                 return 0;
+1030             }
+1031             pskdatalen = s->psk_server_callback(s, pskid, pskdata,
+1032                                                 sizeof(pskdata));
+1033             OPENSSL_free(pskid);
+1034             if (pskdatalen > PSK_MAX_PSK_LEN) {
+1035                 SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1036                 return 0;
+1037             } else if (pskdatalen > 0) {
+1038                 const SSL_CIPHER *cipher;
+1039                 const unsigned char tls13_aes128gcmsha256_id[] = { 0x13, 0x01 };
+1040
+1041                 /*
+1042                  * We found a PSK using an old style callback. We don't know
+1043                  * the digest so we default to SHA256 as per the TLSv1.3 spec
+1044                  */
+1045                 cipher = SSL_CIPHER_find(s, tls13_aes128gcmsha256_id);
+1046                 if (cipher == NULL) {
+1047                     OPENSSL_cleanse(pskdata, pskdatalen);
+1048                     SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1049                     return 0;
+1050                 }
+1051
+1052                 sess = SSL_SESSION_new();
+1053                 if (sess == NULL
+1054                         || !SSL_SESSION_set1_master_key(sess, pskdata,
+1055                                                         pskdatalen)
+1056                         || !SSL_SESSION_set_cipher(sess, cipher)
+1057                         || !SSL_SESSION_set_protocol_version(sess,
+1058                                                              TLS1_3_VERSION)) {
+1059                     OPENSSL_cleanse(pskdata, pskdatalen);
+1060                     SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1061                     goto err;
+1062                 }
+1063                 OPENSSL_cleanse(pskdata, pskdatalen);
+1064             }
+1065         }
+1066 #endif /* OPENSSL_NO_PSK */
+1067
+1068         if (sess != NULL) {
+1069             /* We found a PSK */
+1070             SSL_SESSION *sesstmp = ssl_session_dup(sess, 0);
+1071
+1072             if (sesstmp == NULL) {
+1073                 SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1074                 return 0;
+1075             }
+1076             SSL_SESSION_free(sess);
+1077             sess = sesstmp;
+1078
+1079             /*
+1080              * We've just been told to use this session for this context so
+1081              * make sure the sid_ctx matches up.
+1082              */
+1083             memcpy(sess->sid_ctx, s->sid_ctx, s->sid_ctx_length);
+1084             sess->sid_ctx_length = s->sid_ctx_length;
+1085             ext = 1;
+1086             if (id == 0)
+1087                 s->ext.early_data_ok = 1;
+1088             s->ext.ticket_expected = 1;
+1089         } else {
+1090             uint32_t ticket_age = 0, agesec, agems;
+1091             int ret;
+1092
+1093             /*
+1094              * If we are using anti-replay protection then we behave as if
+1095              * SSL_OP_NO_TICKET is set - we are caching tickets anyway so there
+1096              * is no point in using full stateless tickets.
+1097              */
+1098             if ((s->options & SSL_OP_NO_TICKET) != 0
+1099                     || (s->max_early_data > 0
+1100                         && (s->options & SSL_OP_NO_ANTI_REPLAY) == 0))
+1101                 ret = tls_get_stateful_ticket(s, &identity, &sess);
+1102             else
+1103                 ret = tls_decrypt_ticket(s, PACKET_data(&identity),
+1104                                          PACKET_remaining(&identity), NULL, 0,
+1105                                          &sess);
+1106
+1107             if (ret == SSL_TICKET_EMPTY) {
+1108                 SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+1109                 return 0;
+1110             }
+1111
+1112             if (ret == SSL_TICKET_FATAL_ERR_MALLOC
+1113                     || ret == SSL_TICKET_FATAL_ERR_OTHER) {
+1114                 SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1115                 return 0;
+1116             }
+1117             if (ret == SSL_TICKET_NONE || ret == SSL_TICKET_NO_DECRYPT)
+1118                 continue;
+1119
+1120             /* Check for replay */
+1121             if (s->max_early_data > 0
+1122                     && (s->options & SSL_OP_NO_ANTI_REPLAY) == 0
+1123                     && !SSL_CTX_remove_session(s->session_ctx, sess)) {
+1124                 SSL_SESSION_free(sess);
+1125                 sess = NULL;
+1126                 continue;
+1127             }
+1128
+1129             ticket_age = (uint32_t)ticket_agel;
+1130             agesec = (uint32_t)(time(NULL) - sess->time);
+1131             agems = agesec * (uint32_t)1000;
+1132             ticket_age -= sess->ext.tick_age_add;
+1133
+1134             /*
+1135              * For simplicity we do our age calculations in seconds. If the
+1136              * client does it in ms then it could appear that their ticket age
+1137              * is longer than ours (our ticket age calculation should always be
+1138              * slightly longer than the client's due to the network latency).
+1139              * Therefore we add 1000ms to our age calculation to adjust for
+1140              * rounding errors.
+1141              */
+1142             if (id == 0
+1143                     && sess->timeout >= (long)agesec
+1144                     && agems / (uint32_t)1000 == agesec
+1145                     && ticket_age <= agems + 1000
+1146                     && ticket_age + TICKET_AGE_ALLOWANCE >= agems + 1000) {
+1147                 /*
+1148                  * Ticket age is within tolerance and not expired. We allow it
+1149                  * for early data
+1150                  */
+1151                 s->ext.early_data_ok = 1;
+1152             }
+1153         }
+1154
+1155         md = ssl_md(s->ctx, sess->cipher->algorithm2);
+1156         if (md == NULL) {
+1157             SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
+1158             goto err;
+1159         }
+1160         if (!EVP_MD_is_a(md,
+1161                 EVP_MD_get0_name(ssl_md(s->ctx,
+1162                                         s->s3.tmp.new_cipher->algorithm2)))) {
+1163             /* The ciphersuite is not compatible with this session. */
+1164             SSL_SESSION_free(sess);
+1165             sess = NULL;
+1166             s->ext.early_data_ok = 0;
+1167             s->ext.ticket_expected = 0;
+1168             continue;
+1169         }
+1170         break;
+1171     }
+1172
+1173     if (sess == NULL)
+1174         return 1;
+1175
+1176     binderoffset = PACKET_data(pkt) - (const unsigned char *)s->init_buf->data;
+1177     hashsize = EVP_MD_get_size(md);
+1178
+1179     if (!PACKET_get_length_prefixed_2(pkt, &binders)) {
+1180         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+1181         goto err;
+1182     }
+1183
+1184     for (i = 0; i <= id; i++) {
+1185         if (!PACKET_get_length_prefixed_1(&binders, &binder)) {
+1186             SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+1187             goto err;
+1188         }
+1189     }
+1190
+1191     if (PACKET_remaining(&binder) != hashsize) {
+1192         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+1193         goto err;
+1194     }
+1195     if (tls_psk_do_binder(s, md, (const unsigned char *)s->init_buf->data,
+1196                           binderoffset, PACKET_data(&binder), NULL, sess, 0,
+1197                           ext) != 1) {
+1198         /* SSLfatal() already called */
+1199         goto err;
+1200     }
+1201
+1202     s->ext.tick_identity = id;
+1203
+1204     SSL_SESSION_free(s->session);
+1205     s->session = sess;
+1206     return 1;
+1207 err:
+1208     SSL_SESSION_free(sess);
+1209     return 0;
+1210 }
+```
+
+
+
+## 8.4 Session ID
+
+## 8.5 Session Cache
+
+## 8.6 Session Resumption Test
+
+### 8.6.1 TLSv1.3
+
+
+
+### 8.6.2 TLSv1.2
 

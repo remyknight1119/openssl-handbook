@@ -1543,6 +1543,12 @@ SSL\_SESSION\_list\_add()按照超时时间由远及近排序，将session放入
 1276 }
 ```
 
+1233-1234: 如果session已经在链表中，则删除然后重新添加;
+
+1236-1240: 如果链表是空则直接添加;
+
+1241-1271: 如果链表非空，则按照超时时间排序添加新节点.
+
 ### 8.4.2 Client Cache
 
 Client在收到NEW SESSION TICKET的时候会把session放在cache里:
@@ -1791,6 +1797,20 @@ Client可以使用SSL\_CTX\_add\_session(), SSL\_CTX\_remove\_session()等API对
 513-538: 如果callback查到了，且开启了cache又没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE, 则将session添加到cache中.
 
 ### 8.4.4 Summary
+
+#### 8.4.4.1 TLSv1.2
+
+Client:
+
+* Use Ticket: 收到server端发生的NEW SESSION TICKET之后，将ticket记录在session中; 如果开启了CLIENT CACHE，当调用tls\_finish\_handshake()时如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 如果设置了SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则可能会需要通过相关的callback函数在本地保存session结构;  Client session cache的使用也只能通过API来进行操作，OpenSSL内部代码不会自动操作；如果没有开启CLIENT CACHE, application需要自行保存session结构用于session resumption; 恢复会话的情况下在ClientHello的Session Ticket Extension里面加入ticket信息发送给server;
+* No Ticket: Client还是会像use ticket时那样保存session, 只是session里面没有ticket, 会节省一些内存空间; ClientHello也不需要携带ticket, session结构的恢复需要靠server端根据session ID来查找SERVER cache.
+
+Server:
+
+* Use Ticket:  如果开启了SERVER CACHE，当调用tls\_finish\_handshake()时如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 如果设置了SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则需要通过相关的callback函数在本地保存session结构; 不开启SERVER CACHE则不需要保存任何session信息; 恢复session时需要解析ClientHello里面的ticket信息; 在使用ticket的情况下Cache其实没有什么作用;
+* No Ticket: 与use ticket时一样使用SERVER CACHE；恢复session时无法在ClientHello中找到ticket, 然后会用session ID查找SERVER cache;
+
+#### 8.4.4.2 TLSv1.3
 
 
 

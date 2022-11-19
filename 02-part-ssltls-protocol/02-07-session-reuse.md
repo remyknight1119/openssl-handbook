@@ -1807,12 +1807,28 @@ Client:
 
 Server:
 
-* Use Ticket:  如果开启了SERVER CACHE，当调用tls\_finish\_handshake()时如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 如果设置了SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则需要通过相关的callback函数在本地保存session结构; 不开启SERVER CACHE则不需要保存任何session信息; 恢复session时需要解析ClientHello里面的ticket信息; 在使用ticket的情况下Cache其实没有什么作用;
-* No Ticket: 与use ticket时一样使用SERVER CACHE；恢复session时无法在ClientHello中找到ticket, 然后会用session ID查找SERVER cache;
+* Use Ticket:  如果开启了SERVER CACHE(默认开启)，当调用tls\_finish\_handshake()时如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 如果设置了SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则需要通过相关的callback函数在本地保存session结构; 不开启SERVER CACHE则不需要保存任何session信息; 恢复session时需要解析ClientHello里面的ticket信息; 在使用ticket的情况下Cache其实没有什么作用, 如果不将其关闭则还是会占用server的空间，使得ticket节省server空间的本意失效;
+* No Ticket: 与use ticket时一样使用SERVER CACHE；恢复session时无法在ClientHello中找到ticket, 然后会用session ID查找SERVER cache; 这种情况下cache能发挥切实的作用.
 
 #### 8.4.4.2 TLSv1.3
 
+Client:
 
+* Use Ticket:  收到server端发生的NEW SESSION TICKET之后，将ticket记录在session中; 如果开启了CLIENT CACHE，且如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 恢复session时client需要将ticket放入ClientHello PSK Extension发送给server;
+* No Ticket: 与use ticket的情况基本相同，区别在于client端保存的session没有ticket, 发送PSK Extension中也不会有ticket.
+
+Server:
+
+* Use Ticket: 生成一个stateless ticket, 在NEW SESSION TICKET中发送给Client; 在同时满足下列所有条件下会将session放入Server Cache:
+
+1. 开启了SERVER CACHE(默认开启);
+2. 没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE;
+3. 设置了max\_early\_data;
+4. 设置了SSL\_OP\_NO\_ANTI\_REPLAY.
+
+&#x20;       通过解析ClientHello中的PSK Extension里面的ticket来恢复session; 在不考虑Early Data设置的情况下server端不需要保存session信息;
+
+* No Ticket: 生成一个stateful ticket(session ID), 在NEW SESSION TICKET中发送给Client; 如果开启了SERVER CACHE(默认开启)，且如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 恢复session时根据client发来的session ID在cache查找对应的session.
 
 ## 8.5 Session Resumption Test
 

@@ -268,7 +268,7 @@ Client和Server可以使用Session ticket来恢复session, TLSv1.3可以使用NE
 
 <figure><img src="../.gitbook/assets/Ticket1.png" alt=""><figcaption></figcaption></figure>
 
-Session Ticket消息是由Server端在handshake完成之后发送的:
+Session Ticket消息是由Server端在收到Client端Finished消息之后发送的(对于TLSv1.3来说此时handhskae已经结束):
 
 ```c
 3897 int tls_construct_new_session_ticket(SSL *s, WPACKET *pkt)
@@ -1808,14 +1808,14 @@ Client:
 Server:
 
 * Use Ticket:  如果开启了SERVER CACHE(默认开启)，当调用tls\_finish\_handshake()时如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 如果设置了SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则需要通过相关的callback函数在本地保存session结构; 不开启SERVER CACHE则不需要保存任何session信息; 恢复session时需要解析ClientHello里面的ticket信息; 在使用ticket的情况下Cache其实没有什么作用, 如果不将其关闭则还是会占用server的空间，使得ticket节省server空间的本意失效;
-* No Ticket: 与use ticket时一样使用SERVER CACHE；恢复session时无法在ClientHello中找到ticket, 然后会用session ID查找SERVER cache; 这种情况下cache能发挥切实的作用.
+* No Ticket: 与use ticket时一样使用SERVER CACHE, 但server不发送NEW SESSION TICKET message; 恢复session时无法在ClientHello中找到ticket, 然后会用session ID查找SERVER cache; 这种情况下cache能发挥切实的作用.
 
 #### 8.4.4.2 TLSv1.3
 
 Client:
 
 * Use Ticket:  收到server端发生的NEW SESSION TICKET之后，将ticket记录在session中; 如果开启了CLIENT CACHE，且如果没有设置SSL\_SESS\_CACHE\_NO\_INTERNAL\_STORE则会将session加入到cache中; 恢复session时client需要将ticket放入ClientHello PSK Extension发送给server;
-* No Ticket: 与use ticket的情况基本相同，区别在于client端保存的session没有ticket, 发送PSK Extension中也不会有ticket.
+* No Ticket: 与use ticket使用cache的方法基本相同，区别在于client端保存的session没有ticket, 发送PSK Extension中也不会有ticket.
 
 Server:
 
@@ -1833,6 +1833,30 @@ Server:
 ## 8.5 Session Resumption Test
 
 ### 8.5.1 TLSv1.2
+
+#### 8.5.1.1 Use Ticket
+
+<figure><img src="../.gitbook/assets/t1.png" alt=""><figcaption><p>First ClientHello</p></figcaption></figure>
+
+第一个ClientHello消息，Session ID为0, 有Session ticket Extension，长度为0.
+
+<figure><img src="../.gitbook/assets/t2.png" alt=""><figcaption><p>First ServerHello</p></figcaption></figure>
+
+第一个ServerHello消息，Session ID为0, 有Session ticket Extension，长度为0. 这就表示双方都接受使用session ticket.
+
+<figure><img src="../.gitbook/assets/t3.png" alt=""><figcaption><p>New Session Ticket Message</p></figcaption></figure>
+
+Server在收到Finished消息之后发送New Session Ticket消息.
+
+<figure><img src="../.gitbook/assets/t4.png" alt=""><figcaption><p>Second ClientHello</p></figcaption></figure>
+
+第二次Handhsake时, client把从server收到的ticket放入session ticket Extension中.
+
+<figure><img src="../.gitbook/assets/t5.png" alt=""><figcaption><p>Server Message during session resuption</p></figcaption></figure>
+
+Server收到Ticket之后恢复session, 跳过Certificate和Key Exchange等消息直接使用恢复的key.
+
+#### 8.5.1.2 No Ticket
 
 
 

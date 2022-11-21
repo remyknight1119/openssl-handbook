@@ -1858,7 +1858,23 @@ Server收到Ticket之后恢复session, 跳过Certificate和Key Exchange等消息
 
 #### 8.5.1.2 No Ticket
 
+<figure><img src="../.gitbook/assets/N1.png" alt=""><figcaption><p>First ClientHello</p></figcaption></figure>
 
+第一个ClientHello session ID为0.
+
+<figure><img src="../.gitbook/assets/N2.png" alt=""><figcaption><p>First ServerHello</p></figcaption></figure>
+
+第一个ServerHello Session ID非空，但没有session ticket Extension, 后续也不会发送New Session Ticket message.
+
+<figure><img src="../.gitbook/assets/N3.png" alt=""><figcaption><p>Second ClientHello</p></figcaption></figure>
+
+ClientHello里面的Session ID需要与上个ServerHello中的一致.
+
+<figure><img src="../.gitbook/assets/N4.png" alt=""><figcaption><p>Server Message during session resuption</p></figcaption></figure>
+
+Server根据Session ID在cache中找到session后，跳过Certificate和Key Exchange等消息直接使用恢复的key.
 
 ### 8.5.2 TLSv1.3
+
+8.5.2.1 Use Ticket
 

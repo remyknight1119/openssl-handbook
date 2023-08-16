@@ -10,13 +10,13 @@ Asyn mode是OpenSSL支持异步I/O（AIO）的模式，在这个模式下openssl
 
 比较重要的数据结构：
 
-ASYNC\_JOB: fibrectx用来保存和恢复栈、寄存器；waitctx指向SSL的waitctx; job-&gt;fibrectx.fibre.uc\_stack.ss\_sp指向保存stack信息的空间，大小是STACKSIZE\(32768\) bytes.
+ASYNC\_JOB: fibrectx用来保存和恢复栈、寄存器；waitctx指向SSL的waitctx; job->fibrectx.fibre.uc\_stack.ss\_sp指向保存stack信息的空间，大小是STACKSIZE(32768) bytes.
 
 async\_ctx: 全局唯一，currjob指向一个ASYNC\_JOB；dispatcher用来保存和恢复栈、寄存器，与ASYNC\_JOB的fibrectx配合使用。
 
 ## 1.3 Async mode相关API
 
-开启Async mode可以使用：SSL\_CTX\_set\_mode\(ctx, SSL\_MODE\_ASYNC\)或SSL\_set\_mode\(ssl, SSL\_MODE\_ASYNC\)。在user调用SSL\_do\_handshake\(\)（SSL\_read\(\)/SSL\_write\(\)类似）时，会调用到ssl\_start\_async\_job\(\)：
+开启Async mode可以使用：SSL\_CTX\_set\_mode(ctx, SSL\_MODE\_ASYNC)或SSL\_set\_mode(ssl, SSL\_MODE\_ASYNC)。在user调用SSL\_do\_handshake()（SSL\_read()/SSL\_write()类似）时，会调用到ssl\_start\_async\_job()：
 
 ```c
 3578 int SSL_do_handshake(SSL *s)
@@ -47,9 +47,9 @@ async\_ctx: 全局唯一，currjob指向一个ASYNC\_JOB；dispatcher用来保�
 3603 }
 ```
 
-ASYNC\_get\_current\_job\(\)就是返回全局的async\_ctx-&gt;currjob，如果不为NULL意味着当前有一个job正在处理中，不应该在开启另外一个job；如果s-&gt;handshake\_func触发的回调函数没有再访问一个SSL连接的话，只有在多线程环境下才会进入else分支（3599行）。
+ASYNC\_get\_current\_job()就是返回全局的async\_ctx->currjob，如果不为NULL意味着当前有一个job正在处理中，不应该在开启另外一个job；如果s->handshake\_func触发的回调函数没有再访问一个SSL连接的话，只有在多线程环境下才会进入else分支（3599行）。
 
-ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调函数是ssl\_do\_handshake\_intern，其实就是s-&gt;handshake\_func的简单包裹。
+ssl\_start\_async\_job()会调用ASYNC\_start\_job()函数处理job，回调函数是ssl\_do\_handshake\_intern，其实就是s->handshake\_func的简单包裹。
 
 ```c
 168 int ASYNC_start_job(ASYNC_JOB **job, ASYNC_WAIT_CTX *wctx, int *ret,
@@ -141,7 +141,7 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 254 }
 ```
 
-第一次调用时ctx-&gt;currjob为NULL，会调用async\_get\_pool\_job\(\)申请一个job，在242-243行调用async\_fibre\_swapcontext\(\)时会触发async\_start\_func\(\)函数：
+第一次调用时ctx->currjob为NULL，会调用async\_get\_pool\_job()申请一个job，在242-243行调用async\_fibre\_swapcontext()时会触发async\_start\_func()函数：
 
 ```c
 144 void async_start_func(void)
@@ -168,9 +168,9 @@ ssl\_start\_async\_job\(\)会调用ASYNC\_start\_job\(\)函数处理job，回调
 165 }
 ```
 
-152行调用的就是ssl\_do\_handshake\_intern\(\)函数，也就是说在切换了执行上下文后再执行handshake的实际动作；
+152行调用的就是ssl\_do\_handshake\_intern()函数，也就是说在切换了执行上下文后再执行handshake的实际动作；
 
-async\_get\_pool\_job\(\)函数负责申请和设置job-&gt;fibrectx数据结构：
+async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 
 ```c
 102 static ASYNC_JOB *async_get_pool_job(void) {
@@ -207,7 +207,7 @@ async\_get\_pool\_job\(\)函数负责申请和设置job-&gt;fibrectx数据结构
 133 }
 ```
 
-125行async\_fibre\_makecontext\(\)函数有两个关键步骤：
+125行async\_fibre\_makecontext()函数有两个关键步骤：
 
 ```c
  35 int async_fibre_makecontext(async_fibre *fibre)
@@ -230,9 +230,9 @@ async\_get\_pool\_job\(\)函数负责申请和设置job-&gt;fibrectx数据结构
 
 39-41行设置stack缓存空间；
 
-43行设置async\_start\_func\(\)为切换stack之后触发的函数。
+43行设置async\_start\_func()为切换stack之后触发的函数。
 
-在调用到密码算法相关函数（如：RSA 加密/解密）时，这个操作需要提交硬件加速卡来执行，提交请求完毕后需要等待硬件返回结果，这时需要调用ASYNC\_pause\_job\(\)函数来结束本次SSL\_do\_handshake\(\)的调用：
+在调用到密码算法相关函数（如：RSA 加密/解密）时，这个操作需要提交硬件加速卡来执行，提交请求完毕后需要等待硬件返回结果，这时需要调用ASYNC\_pause\_job()函数来结束本次SSL\_do\_handshake()的调用：
 
 ```c
 255 int ASYNC_pause_job(void)
@@ -265,15 +265,15 @@ async\_get\_pool\_job\(\)函数负责申请和设置job-&gt;fibrectx数据结构
 282 }
 ```
 
-执行到273-274行时，保存当前上下文（async\_start\_func\(\)函数），返回到ASYNC\_start\_job\(\)的242-243行，然后在200行返回。
+执行到273-274行时，保存当前上下文（async\_start\_func()函数），返回到ASYNC\_start\_job()的242-243行，然后在200行返回。
 
-当硬件加速卡完成任务，通知user之后，user会再次调用SSL\_do\_handshake\(\)，同样还会进入到ASYNC\_start\_job\(\)这时会进入203行这个分支，并在206行调用async\_fibre\_swapcontext\(\)时切换到之前保存的async\_start\_func\(\)函数的152行（即s-&gt;handshake\_func）函数内部调用的ASYNC\_pause\_job\(\)函数的273-274行，然后执行279行并退出这个函数，取回硬件加密/解密的结果，执行后续处理（构建handshake消息等）；接下来async\_start\_func\(\)函数的152行结束在156-157行调用async\_fibre\_swapcontext\(\)切换回ASYNC\_start\_job\(\)函数的206-207行，最后通过187行这个分支在193行返回ASYNC\_FINISH。
+当硬件加速卡完成任务，通知user之后，user会再次调用SSL\_do\_handshake()，同样还会进入到ASYNC\_start\_job()这时会进入203行这个分支，并在206行调用async\_fibre\_swapcontext()时切换到之前保存的async\_start\_func()函数的152行（即s->handshake\_func）函数内部调用的ASYNC\_pause\_job()函数的273-274行，然后执行279行并退出这个函数，取回硬件加密/解密的结果，执行后续处理（构建handshake消息等）；接下来async\_start\_func()函数的152行结束在156-157行调用async\_fibre\_swapcontext()切换回ASYNC\_start\_job()函数的206-207行，最后通过187行这个分支在193行返回ASYNC\_FINISH。
 
 总结下ASYNC\_JOB的状态变迁流程：
 
-第一次handshake: ASYNC\_start\_job\(\)-&gt;async\_get\_pool\_job\(\)---&gt;\[ASYNC\_JOB\_RUNNING\]---&gt;async\_fibre\_swapcontext\(\)-&gt; async\_start\_func\(\)-&gt;ASYNC\_pause\_job\(\)---&gt;\[ASYNC\_JOB\_PAUSING\]---&gt;async\_fibre\_swapcontext-&gt;ASYNC\_start\_job\(\)---&gt; \[ASYNC\_JOB\_PAUSED\]
+第一次handshake: ASYNC\_start\_job()->async\_get\_pool\_job()--->\[ASYNC\_JOB\_RUNNING]--->async\_fibre\_swapcontext()-> async\_start\_func()->ASYNC\_pause\_job()--->\[ASYNC\_JOB\_PAUSING]--->async\_fibre\_swapcontext->ASYNC\_start\_job()---> \[ASYNC\_JOB\_PAUSED]
 
-第二次handshake: \[ASYNC\_JOB\_PAUSED\]---&gt;ASYNC\_start\_job\(\)-&gt;async\_fibre\_swapcontext\(\)-&gt;async\_start\_func\(\)---&gt; \[ASYNC\_JOB\_STOPPING\]---&gt;async\_fibre\_swapcontext\(\)-&gt;ASYNC\_start\_job\(\)---&gt;return ASYNC\_FINISH
+第二次handshake: \[ASYNC\_JOB\_PAUSED]--->ASYNC\_start\_job()->async\_fibre\_swapcontext()->async\_start\_func()---> \[ASYNC\_JOB\_STOPPING]--->async\_fibre\_swapcontext()->ASYNC\_start\_job()--->return ASYNC\_FINISH
 
 ## 1.4 QAT engine ASYNC运行流程
 
@@ -281,3 +281,13 @@ async\_get\_pool\_job\(\)函数负责申请和设置job-&gt;fibrectx数据结构
 
 本图以RSA加密解密为例，简要介绍了intel QAT engine的ASYNC mode运行流程。
 
+&#x20;第一次call SSL\_do\_handshake：
+
+1. ASYNC\_get\_current\_job() == NULL(async\_get\_ctx() == NULL), call ssl\_start\_async\_job(), func parmeter point to ssl\_do\_handshake\_intern();
+2. ASYNC\_start\_job(): async\_ctx\_new(); \*job == NULL;
+3. ASYNC\_start\_job(): Start a new job: async\_get\_pool\_job()(call async\_fibre\_makecontext() to set async\_start\_func() as the default function to be called when swap context);
+4. ASYNC\_start\_job(): set ctx->currjob->func to the func iin 1(ssl\_do\_handshake\_intern());
+5. ASYNC\_start\_job(): call async\_fibre\_swapcontext() to start async\_start\_func();
+6. async\_start\_func(): get the currjob, call job->func()(ssl\_do\_handshake\_intern());
+7. ssl\_do\_handshake\_intern(): call s->handshake\_func()(ossl\_statem\_accept());
+8.

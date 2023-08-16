@@ -282,17 +282,20 @@ async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 本图以RSA加密解密为例，简要介绍了intel QAT engine的ASYNC mode运行流程。
 
 1. **First call SSL\_do\_handshake()**: ASYNC\_get\_current\_job() == NULL(async\_get\_ctx() == NULL), call ssl\_start\_async\_job(), func parmeter point to ssl\_do\_handshake\_intern(); call ASYNC\_start\_job();
-2. ASYNC\_start\_job(): async\_ctx\_new(); \*job == NULL;
-3. ASYNC\_start\_job(): Start a new job: async\_get\_pool\_job()(call async\_fibre\_makecontext() to set async\_start\_func() as the default function to be called when swap context);
-4. ASYNC\_start\_job(): set ctx->currjob->func to the func in step 1(ssl\_do\_handshake\_intern());
-5. ASYNC\_start\_job(): call **async\_fibre\_swapcontext()** to start async\_start\_func();
-6. async\_start\_func(): get the currjob, call job->func()(ssl\_do\_handshake\_intern());
-7. ssl\_do\_handshake\_intern(): call s->handshake\_func()(ossl\_statem\_accept());
-8. ossl\_statem\_accept() call qat\_pkey\_ecx\_keygen(), and qat\_pkey\_ecx\_keygen() call ASYNC\_pause\_job() and thus pause there;
-9. ASYNC\_pause\_job(): job->status = ASYNC\_JOB\_PAUSING and call **async\_fibre\_swapcontext()** to back to step 5;
-10. ASYNC\_start\_job(): ctx->currjob->status = ASYNC\_JOB\_PAUSED and ctx->currjob = NULL; return ASYNC\_PAUSE;
-11. SSL\_do\_handshake() returns SSL\_ERROR\_WANT\_ASYNC;
+2. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): async\_ctx\_new(); \*job == NULL;
+3. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): Start a new job: async\_get\_pool\_job()(call async\_fibre\_makecontext() to set async\_start\_func() as the default function to be called when swap context);
+4. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): set ctx->currjob->func to the func in step 1(ssl\_do\_handshake\_intern());
+5. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): call **async\_fibre\_swapcontext()** to start async\_start\_func();
+6. **async\_start\_func()**: get the currjob, call job->func()(ssl\_do\_handshake\_intern());
+7. **async\_start\_func()**--->ssl\_do\_handshake\_intern(): call s->handshake\_func()(ossl\_statem\_accept());
+8. **async\_start\_func()**: ossl\_statem\_accept() call qat\_pkey\_ecx\_keygen(), and qat\_pkey\_ecx\_keygen() call ASYNC\_pause\_job() and thus pause there;
+9. **async\_start\_func()**--->qat\_pkey\_ecx\_keygen(): ASYNC\_pause\_job(): job->status = ASYNC\_JOB\_PAUSING and call **async\_fibre\_swapcontext()** to back to step 5;
+10. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): ctx->currjob->status = ASYNC\_JOB\_PAUSED and ctx->currjob = NULL; return ASYNC\_PAUSE;
+11. **SSL\_do\_handshake()**: returns SSL\_ERROR\_WANT\_ASYNC;
 12. **Second call SSL\_do\_handshake()**: ASYNC\_get\_current\_job() == NULL(ctx->currjob == NULL), call ssl\_start\_async\_job()--->call ASYNC\_start\_job();
-13. ASYNC\_start\_job(): ctx->currjob = s->job; all **async\_fibre\_swapcontext()** to resume to step 9;
-14. qat\_pkey\_ecx\_keygen(): if qat\_crypto\_callbackFn() was called after pause and before resume, opDone->flag will be set to 1, and thus break out while(); if not, goto next pause and redo step 9;
-15. qat\_pkey\_ecx\_keygen():  if break out while(), return and continue to do the next steps in SSL\_do\_handshake().
+13. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): ctx->currjob = s->job; ctx->currjob->status == ASYNC\_JOB\_PAUSED; call **async\_fibre\_swapcontext()** to resume to step 9;
+14. **async\_start\_func()**--->qat\_pkey\_ecx\_keygen(): if qat\_crypto\_callbackFn() was called after pause and before resume, opDone->flag will be set to 1, and thus break out while(); if not, goto next pause and redo step 9;
+15. **async\_start\_func()**--->qat\_pkey\_ecx\_keygen():  if break out while(), return;
+16. **async\_start\_func():** job->status = ASYNC\_JOB\_STOPPING; call **async\_fibre\_swapcontext()** to switch to step 13;
+17. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): async\_release\_job(ctx->currjob); ctx->currjob = NULL; s->job = NULL; return ASYNC\_FINISH;
+18. SSL\_do\_handshake() return, this ASYNC process ends.

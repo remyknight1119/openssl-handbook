@@ -277,7 +277,7 @@ async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 
 ## 1.4 QAT engine ASYNC运行流程
 
-![Figure 2. Intel QAT engine ASYNC flow](../.gitbook/assets/async2.jpg)
+<figure><img src="../.gitbook/assets/async2 (1).jpg" alt=""><figcaption></figcaption></figure>
 
 本图以RSA加密解密为例，简要介绍了intel QAT engine的ASYNC mode运行流程。
 

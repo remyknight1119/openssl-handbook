@@ -168,7 +168,7 @@ ssl\_start\_async\_job()会调用ASYNC\_start\_job()函数处理job，回调函�
 165 }
 ```
 
-152行调用的就是ssl\_do\_handshake\_intern()函数，也就是说在切换了执行上下文后再执行handshake的实际动作；
+152: 调用的就是ssl\_do\_handshake\_intern()函数，也就是说在切换了执行上下文后再执行handshake的实际动作；
 
 async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 
@@ -207,7 +207,7 @@ async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 133 }
 ```
 
-125行async\_fibre\_makecontext()函数有两个关键步骤：
+125: async\_fibre\_makecontext()函数有两个关键步骤：
 
 ```c
  35 int async_fibre_makecontext(async_fibre *fibre)
@@ -299,3 +299,297 @@ async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 16. **async\_start\_func():** job->status = ASYNC\_JOB\_STOPPING; call **async\_fibre\_swapcontext()** to switch to step 13;
 17. **SSL\_do\_handshake()**--->ASYNC\_start\_job(): async\_release\_job(ctx->currjob); ctx->currjob = NULL; s->job = NULL; return ASYNC\_FINISH;
 18. SSL\_do\_handshake() return, this ASYNC process ends.
+
+## 1.5 Job和stack资源释放
+
+在执行上述异步操作流程的过程中申请了32768 bytes大小的内存用于存储stack信息：
+
+```c
+int async_fibre_makecontext(async_fibre *fibre)
+{
+#ifndef USE_SWAPCONTEXT
+    fibre->env_init = 0;
+#endif
+    if (getcontext(&fibre->fibre) == 0) {
+        fibre->fibre.uc_stack.ss_sp = OPENSSL_malloc(STACKSIZE);
+        if (fibre->fibre.uc_stack.ss_sp != NULL) {
+            fibre->fibre.uc_stack.ss_size = STACKSIZE;
+            fibre->fibre.uc_link = NULL;
+            makecontext(&fibre->fibre, async_start_func, 0); 
+            return 1;
+        }   
+    } else {
+        fibre->fibre.uc_stack.ss_sp = NULL;
+    }   
+    return 0;
+}
+```
+
+它的释放是在async\_fibre\_free():
+
+```c
+void async_fibre_free(async_fibre *fibre)
+{
+    OPENSSL_free(fibre->fibre.uc_stack.ss_sp);
+    fibre->fibre.uc_stack.ss_sp = NULL;
+}
+```
+
+调用这个函数的只有一处：
+
+```c
+ 95 static void async_job_free(ASYNC_JOB *job)
+ 96 {
+ 97     if (job != NULL) {
+ 98         OPENSSL_free(job->funcargs);
+ 99         async_fibre_free(&job->fibrectx);
+100         OPENSSL_free(job);
+101     }
+102 }
+```
+
+可见stack资源是与job资源一起释放的，它们的lifetime是一样的。
+
+真正调用async\_job\_free()来释放job的所有资源的也只有一处：
+
+```c
+320 static void async_empty_pool(async_pool *pool)
+321 {
+322     ASYNC_JOB *job;
+323 
+324     if (pool == NULL || pool->jobs == NULL)
+325         return;
+326 
+327     do {
+328         job = sk_ASYNC_JOB_pop(pool->jobs);
+329         async_job_free(job);
+330     } while (job);
+331 }
+...
+413 static void async_delete_thread_state(void *arg)
+414 {
+415     async_pool *pool = (async_pool *)CRYPTO_THREAD_get_local(&poolkey);
+416 
+417     if (pool != NULL) {
+418         async_empty_pool(pool);
+419         sk_ASYNC_JOB_free(pool->jobs);
+420         OPENSSL_free(pool);
+421         CRYPTO_THREAD_set_local(&poolkey, NULL);
+422     }
+423     async_local_cleanup();
+424     async_ctx_free();
+425 }
+426 
+427 void ASYNC_cleanup_thread(void)
+428 {
+429     if (!OPENSSL_init_crypto(OPENSSL_INIT_ASYNC, NULL))
+430         return;
+431 
+432     async_delete_thread_state(NULL);
+433 }
+```
+
+App可以通过调用ASYNC\_cleanup\_thread()来释放所有job资源；还有一种情况可以调用ASYNC\_cleanup\_thread():
+
+```c
+ 35 static async_ctx *async_ctx_new(void) 
+ 36 {
+ 37     async_ctx *nctx;
+ 38 
+ 39     if (!ossl_init_thread_start(NULL, NULL, async_delete_thread_state))
+ 40         return NULL;      
+ 41                           
+ 42     nctx = OPENSSL_malloc(sizeof(*nctx)); 
+ 43     if (nctx == NULL) {
+ 44         ERR_raise(ERR_LIB_ASYNC, ERR_R_MALLOC_FAILURE);
+ 45         goto err;
+ 46     }
+ 47 
+ 48     async_fibre_init_dispatcher(&nctx->dispatcher);
+ 49     nctx->currjob = NULL;
+ 50     nctx->blocked = 0;
+ 51     if (!CRYPTO_THREAD_set_local(&ctxkey, nctx))
+ 52         goto err;
+ 53 
+ 54     return nctx;
+ 55 err:
+ 56     OPENSSL_free(nctx);
+ 57 
+ 58     return NULL;
+ 59 }
+```
+
+39: ossl\_init\_thread\_start()设置了async\_delete\_thread\_state()作为处理函数:
+
+```c
+365 int ossl_init_thread_start(const void *index, void *arg,
+366                            OSSL_thread_stop_handler_fn handfn)
+367 {
+368     THREAD_EVENT_HANDLER **hands;
+369     THREAD_EVENT_HANDLER *hand;
+370 #ifdef FIPS_MODULE
+371     OSSL_LIB_CTX *ctx = arg;
+372 
+373     /*
+374      * In FIPS mode the list of THREAD_EVENT_HANDLERs is unique per combination
+375      * of OSSL_LIB_CTX and thread. This is because in FIPS mode each
+376      * OSSL_LIB_CTX gets informed about thread stop events individually.
+377      */
+378     CRYPTO_THREAD_LOCAL *local
+379         = ossl_lib_ctx_get_data(ctx, OSSL_LIB_CTX_THREAD_EVENT_HANDLER_INDEX);
+380 #else
+381     /*
+382      * Outside of FIPS mode the list of THREAD_EVENT_HANDLERs is unique per
+383      * thread, but may hold multiple OSSL_LIB_CTXs. We only get told about
+384      * thread stop events globally, so we have to ensure all affected
+385      * OSSL_LIB_CTXs are informed.
+386      */
+387     CRYPTO_THREAD_LOCAL *local = &destructor_key.value;
+388 #endif
+389 
+390     hands = init_get_thread_local(local, 1, 0);
+391     if (hands == NULL)
+392         return 0;
+393 
+394 #ifdef FIPS_MODULE
+395     if (*hands == NULL) {
+396         /*
+397          * We've not yet registered any handlers for this thread. We need to get
+398          * libcrypto to tell us about later thread stop events. c_thread_start
+399          * is a callback to libcrypto defined in fipsprov.c
+400          */
+401         if (!ossl_thread_register_fips(ctx))
+402             return 0;
+403     }
+404 #endif
+405 
+406     hand = OPENSSL_malloc(sizeof(*hand));
+407     if (hand == NULL)
+408         return 0;
+409 
+410     hand->handfn = handfn;
+411     hand->arg = arg;
+412 #ifndef FIPS_MODULE
+413     hand->index = index;
+414 #endif
+415     hand->next = *hands;
+416     *hands = hand;
+417 
+418     return 1;
+419 }
+```
+
+410: handfn会在init\_thread\_stop()中调用：
+
+```c
+322 static void init_thread_stop(void *arg, THREAD_EVENT_HANDLER **hands)
+323 {   
+324     THREAD_EVENT_HANDLER *curr, *prev = NULL, *tmp;
+325 #ifndef FIPS_MODULE
+326     GLOBAL_TEVENT_REGISTER *gtr;
+327 #endif
+328     
+329     /* Can't do much about this */
+330     if (hands == NULL)
+331         return;
+332 
+333 #ifndef FIPS_MODULE
+334     gtr = get_global_tevent_register();
+335     if (gtr == NULL)
+336         return;
+337     
+338     if (!CRYPTO_THREAD_write_lock(gtr->lock))
+339         return;
+340 #endif
+341     
+342     curr = *hands; 
+343     while (curr != NULL) { 
+344         if (arg != NULL && curr->arg != arg) {
+345             prev = curr;
+346             curr = curr->next;
+347             continue;
+348         }
+349         curr->handfn(curr->arg);
+350         if (prev == NULL)
+351             *hands = curr->next;
+352         else
+353             prev->next = curr->next;
+354         
+355         tmp = curr;
+356         curr = curr->next;
+357         
+358         OPENSSL_free(tmp);
+359     }
+360 #ifndef FIPS_MODULE
+361     CRYPTO_THREAD_unlock(gtr->lock);
+362 #endif
+363 }
+```
+
+init\_thread\_stop()会在很多线程退出的相关函数中调用；不再展开。
+
+重点说下job资源. Job资源是全局的，在进程运行过程中不断进行Async相关操作，job是如何管理的呢？
+
+ASYNC\_start\_job()会调用async\_get\_pool\_job()申请一个新job:
+
+```c
+104 static ASYNC_JOB *async_get_pool_job(void) { 
+105     ASYNC_JOB *job;       
+106     async_pool *pool;     
+107 
+108     pool = (async_pool *)CRYPTO_THREAD_get_local(&poolkey);                                                                                                                                                                          
+109     if (pool == NULL) {   
+110         /*
+111          * Pool has not been initialised, so init with the defaults, i.e.
+112          * no max size and no pre-created jobs                                                                                                                                                                                       
+113          */               
+114         if (ASYNC_init_thread(0, 0) == 0)  
+115             return NULL;
+116         pool = (async_pool *)CRYPTO_THREAD_get_local(&poolkey);                                                                                                                                                                      
+117     }
+118 
+119     job = sk_ASYNC_JOB_pop(pool->jobs);
+120     if (job == NULL) {
+121         /* Pool is empty */
+122         if ((pool->max_size != 0) && (pool->curr_size >= pool->max_size))                                                                                                                                                            
+123             return NULL;
+124 
+125         job = async_job_new();
+126         if (job != NULL) {
+127             if (! async_fibre_makecontext(&job->fibrectx)) {
+128                 async_job_free(job);           
+129                 return NULL;
+130             }
+131             pool->curr_size++;
+132         }
+133     }
+134     return job;
+135 }
+```
+
+119: 如果local pool中有现成的job，则pop出一个；
+
+125: 如果没有就调用async\_job\_new()申请一个；
+
+131: 将来这个新申请的job还会被add回pool, 所以curr\_size先+一个；
+
+ASYNC\_start\_job()中如果返回ASYNC\_FINISH或ASYNC\_ERR之前会调用async\_release\_job():
+
+```c
+137 static void async_release_job(ASYNC_JOB *job) {
+138     async_pool *pool;
+139 
+140     pool = (async_pool *)CRYPTO_THREAD_get_local(&poolkey);
+141     if (pool == NULL) {
+142         ERR_raise(ERR_LIB_ASYNC, ERR_R_INTERNAL_ERROR);
+143         return;
+144     }
+145     OPENSSL_free(job->funcargs);
+146     job->funcargs = NULL;
+147     sk_ASYNC_JOB_push(pool->jobs, job);
+148 }
+```
+
+147: 将job加回到pool中以便下次使用。
+
+可见job及其相关资源会一直保持在全局的pool中，不用考虑释放除非进程/线程退出。

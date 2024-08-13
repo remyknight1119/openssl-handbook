@@ -168,9 +168,7 @@ ssl\_start\_async\_job()会调用ASYNC\_start\_job()函数处理job，回调函�
 165 }
 ```
 
-152: 调用的就是ssl\_do\_handshake\_intern()函数，也就是说在切换了执行上下文后再执行handshake的实际动作；
-
-async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
+152: 调用的就是ssl\_do\_handshake\_intern()函数，也就是说在切换了执行上下文后再执行handshake的实际动作；async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 
 ```c
 102 static ASYNC_JOB *async_get_pool_job(void) {
@@ -228,11 +226,11 @@ async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
  50 }  
 ```
 
-39-41行设置stack缓存空间；
+39-41: 设置stack缓存空间；
 
-43行设置async\_start\_func()为切换stack之后触发的函数。
+43: 设置async\_start\_func()为切换stack之后触发的函数。
 
-在调用到密码算法相关函数（如：RSA 加密/解密）时，这个操作需要提交硬件加速卡来执行，提交请求完毕后需要等待硬件返回结果，这时需要调用ASYNC\_pause\_job()函数来结束本次SSL\_do\_handshake()的调用：
+在调用到密码算法相关函数(如：RSA 加密/解密)时，这个操作需要提交硬件加速卡来执行，提交请求完毕后需要等待硬件返回结果，这时需要调用ASYNC\_pause\_job()函数来结束本次SSL\_do\_handshake()的调用：
 
 ```c
 255 int ASYNC_pause_job(void)
@@ -265,7 +263,7 @@ async\_get\_pool\_job()函数负责申请和设置job->fibrectx数据结构：
 282 }
 ```
 
-执行到273-274行时，保存当前上下文（async\_start\_func()函数），返回到ASYNC\_start\_job()的242-243行，然后在200行返回。
+273-274: 保存当前上下文（async\_start\_func()函数），返回到ASYNC\_start\_job()的242-243行，然后在200行返回。
 
 当硬件加速卡完成任务，通知user之后，user会再次调用SSL\_do\_handshake()，同样还会进入到ASYNC\_start\_job()这时会进入203行这个分支，并在206行调用async\_fibre\_swapcontext()时切换到之前保存的async\_start\_func()函数的152行（即s->handshake\_func）函数内部调用的ASYNC\_pause\_job()函数的273-274行，然后执行279行并退出这个函数，取回硬件加密/解密的结果，执行后续处理（构建handshake消息等）；接下来async\_start\_func()函数的152行结束在156-157行调用async\_fibre\_swapcontext()切换回ASYNC\_start\_job()函数的206-207行，最后通过187行这个分支在193行返回ASYNC\_FINISH。
 
